@@ -29,16 +29,16 @@ library ieee;
 use ieee.std_logic_1164.all;
 
 entity aes50_crc32 is
-generic (
-    g_data_width    : natural := 8 );
-port (
-    clk50_i       : in  std_logic;
-    clock_en_i    : in  std_logic;
-    sync_i        : in  std_logic;
-    data_i        : in  std_logic_vector(g_data_width-1 downto 0);
-    data_valid_i  : in  std_logic;
-    
-    crc_o         : out std_logic_vector(31 downto 0) );
+    generic (
+        g_data_width : natural := 8);
+    port (
+        clk50_i      : in std_logic;
+        clock_en_i   : in std_logic;
+        sync_i       : in std_logic;
+        data_i       : in std_logic_vector(g_data_width-1 downto 0);
+        data_valid_i : in std_logic;
+
+        crc_o : out std_logic_vector(31 downto 0));
 end aes50_crc32;
 
 architecture behavioral of aes50_crc32 is
@@ -52,12 +52,12 @@ architecture behavioral of aes50_crc32 is
 
 begin
     process(clk50_i)
-        function new_crc(i, p: std_logic_vector; data_i : std_logic) return std_logic_vector is
+        function new_crc(i, p : std_logic_vector; data_i : std_logic) return std_logic_vector is
             variable sh : std_logic_vector(i'range);
             variable d  : std_logic;
         begin
-            d := data_i xor i(i'high);
-            sh := i(i'high-1 downto 0) & d; --'0';
+            d  := data_i xor i(i'high);
+            sh := i(i'high-1 downto 0) & d;  --'0';
             if d = '1' then
                 sh := sh xor p;
             end if;
@@ -67,24 +67,24 @@ begin
         variable tmp : std_logic_vector(crc_reg'range);
     begin
         if rising_edge(clk50_i) then
-            if clock_en_i='1' then
-                if data_valid_i='1' then
-                    if sync_i='1' then
+            if clock_en_i = '1' then
+                if data_valid_i = '1' then
+                    if sync_i = '1' then
                         tmp := (others => '1');
                     else
                         tmp := crc_reg;
                     end if;
-                    
-                    for i in data_i'reverse_range loop -- LSB first!
+
+                    for i in data_i'reverse_range loop  -- LSB first!
                         tmp := new_crc(tmp, polynom, data_i(i));
                     end loop;
                     crc_reg <= tmp;
-                elsif sync_i='1' then
+                elsif sync_i = '1' then
                     crc_reg <= (others => '1');
                 end if;
             end if;
         end if;
-    end process;   
+    end process;
 
     process(crc_reg)
     begin
