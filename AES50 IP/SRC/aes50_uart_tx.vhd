@@ -16,8 +16,8 @@
 -- ###########################################################################
 
 
--- Set Generic g_CLKS_PER_BIT as follows:
--- g_CLKS_PER_BIT = (Frequency of i_Clk)/(Frequency of UART)
+-- Set Generic i_CLKS_PER_BIT as follows:
+-- i_CLKS_PER_BIT = (Frequency of i_Clk)/(Frequency of UART)
 -- Example: 10 MHz Clock, 115200 baud UART
 -- (10000000)/(115200) = 87
 --
@@ -25,17 +25,15 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
  
-entity aes50_uart_tx is
-  generic (
-    g_CLKS_PER_BIT : integer := 868     -- Needs to be set correctly
-    );
+entity aes50_uart_tx is 
   port (
-    i_Clk       : in  std_logic;
-    i_TX_DV     : in  std_logic;
-    i_TX_Byte   : in  std_logic_vector(7 downto 0);
-    o_TX_Active : out std_logic;
-    o_TX_Serial : out std_logic;
-    o_TX_Done   : out std_logic
+    i_Clk       		: in  std_logic;
+    i_TX_DV     		: in  std_logic;
+    i_TX_Byte   		: in  std_logic_vector(7 downto 0);
+	i_CLKS_PER_BIT 		: in integer;     
+    o_TX_Active 		: out std_logic;
+    o_TX_Serial 		: out std_logic;
+    o_TX_Done   		: out std_logic
     );
 end aes50_uart_tx;
  
@@ -46,7 +44,7 @@ architecture rtl of aes50_uart_tx is
                      s_TX_Stop_Bit, s_Cleanup);
   signal r_SM_Main : t_SM_Main := s_Idle;
  
-  signal r_Clk_Count : integer range 0 to g_CLKS_PER_BIT-1 := 0;
+  signal r_Clk_Count : integer := 0;
   signal r_Bit_Index : integer range 0 to 7 := 0;  -- 8 Bits Total
   signal r_TX_Data   : std_logic_vector(7 downto 0) := (others => '0');
   signal r_TX_Done   : std_logic := '0';
@@ -79,8 +77,8 @@ begin
           o_TX_Active <= '1';
           o_TX_Serial <= '0';
  
-          -- Wait g_CLKS_PER_BIT-1 clock cycles for start bit to finish
-          if r_Clk_Count < g_CLKS_PER_BIT-1 then
+          -- Wait i_CLKS_PER_BIT-1 clock cycles for start bit to finish
+          if r_Clk_Count < i_CLKS_PER_BIT-1 then
             r_Clk_Count <= r_Clk_Count + 1;
             r_SM_Main   <= s_TX_Start_Bit;
           else
@@ -88,11 +86,11 @@ begin
             r_SM_Main   <= s_TX_Data_Bits;
           end if;
  
-        -- Wait g_CLKS_PER_BIT-1 clock cycles for data bits to finish
+        -- Wait i_CLKS_PER_BIT-1 clock cycles for data bits to finish
         when s_TX_Data_Bits =>
           o_TX_Serial <= r_TX_Data(r_Bit_Index);
            
-          if r_Clk_Count < g_CLKS_PER_BIT-1 then
+          if r_Clk_Count < i_CLKS_PER_BIT-1 then
             r_Clk_Count <= r_Clk_Count + 1;
             r_SM_Main   <= s_TX_Data_Bits;
           else
@@ -112,8 +110,8 @@ begin
         when s_TX_Stop_Bit =>
           o_TX_Serial <= '1';
  
-          -- Wait g_CLKS_PER_BIT-1 clock cycles for Stop bit to finish
-          if r_Clk_Count < g_CLKS_PER_BIT-1 then
+          -- Wait i_CLKS_PER_BIT-1 clock cycles for Stop bit to finish
+          if r_Clk_Count < i_CLKS_PER_BIT-1 then
             r_Clk_Count <= r_Clk_Count + 1;
             r_SM_Main   <= s_TX_Stop_Bit;
           else

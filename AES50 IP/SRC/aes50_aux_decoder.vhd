@@ -36,20 +36,15 @@ entity aes50_aux_decoder is
     port (
         clk100_core_i           : in  std_logic; 
         rst_i                   : in  std_logic;                
-    
-        
+            
         aux_i                   : in  std_logic_vector(15 downto 0);
 		aux_data_start_marker_i : in  std_logic; 
         aux_in_rd_en_o          : out std_logic;
         fifo_fill_count_aux_i   : in  integer range 176 - 1 downto 0;
         
-        
-        
-        data_out_8bit           : out std_logic_vector(7 downto 0);
-        data_out_valid          : out std_logic
-
-		
-    );
+		uart_clks_per_bit_i		: in integer;
+        uart_o					: out std_logic
+	);
 end aes50_aux_decoder;
 
 architecture rtl of aes50_aux_decoder is
@@ -60,23 +55,30 @@ architecture rtl of aes50_aux_decoder is
     signal is_processing     : std_logic := '0';
     signal fifo_wait_data    : integer range 0 to 3 := 0;
     signal shift_reg_in      : std_logic_vector(15 downto 0);
-    signal current_start_mkr : std_logic := '0';
-    
-	signal first_valid_detect : std_logic := '0';
-		
-    
-    signal descramble_reg    : std_logic_vector(8 downto 0) := (others => '0');
-    
-    
-    signal pattern_detect    : std_logic_vector(10 downto 0) := (others => '0');
-	
-    signal ones_cnt          : integer range 0 to 15 := 0;
-    
-    
+    signal current_start_mkr : std_logic := '0';    
+	signal first_valid_detect : std_logic := '0';    
+    signal descramble_reg    : std_logic_vector(8 downto 0) := (others => '0'); 
+    signal pattern_detect    : std_logic_vector(10 downto 0) := (others => '0');	
+    signal ones_cnt          : integer range 0 to 15 := 0;    
     signal byte_shifter      : std_logic_vector(7 downto 0) := (others => '0');
     signal byte_bit_cnt      : integer range 0 to 7 := 0;
-
 	signal flush_cnt : integer range 0 to 11 := 0;
+	
+	
+	signal data_out_8bit           : std_logic_vector(7 downto 0);
+    signal data_out_valid          : std_logic;
+	
+	
+	--UART Signals
+	signal uart_tx_byte										: std_logic_vector(7 downto 0);
+	signal uart_tx_enable									: std_logic;
+	signal uart_tx_busy										: std_logic;
+	signal uart_tx_done										: std_logic;
+	
+	signal fifo_to_uart_data								: std_logic_vector(7 downto 0);
+	signal fifo_to_uart_rd_en								: std_logic;
+	signal fifo_to_uart_count								: integer range 4095 downto 0;
+	signal fifo_uart_tx_state								: integer range 15 downto 0;
 
 begin
 
@@ -85,7 +87,7 @@ begin
     process(clk100_core_i)
         variable descrambled_bit : std_logic;
 		variable payload_bit	 : std_logic;
-		variable pattern_detect_v : std_logic_vector(10 downto 0);  -- ADD THIS
+		variable pattern_detect_v : std_logic_vector(10 downto 0);  
 		variable current_bit      : std_logic;
     begin
 	
@@ -118,7 +120,6 @@ begin
                     fifo_wait_data <= 2;
 					
                 elsif fifo_wait_data = 2 then
-                    -- Daten vom Bus übernehmen
                     shift_reg_in      <= aux_i;
                     current_start_mkr <= aux_data_start_marker_i;
                     bit_idx           <= 0;
@@ -141,7 +142,7 @@ begin
 					pattern_detect_v   := pattern_detect(9 downto 0) & current_bit;
 					pattern_detect <= pattern_detect_v;
 
-					-- Unconditional per-frame descrambler reset (spec 8.3)
+					
 					if current_start_mkr = '1' and bit_idx = 0 then
 						descramble_reg <= "000000000";
 						--ones_cnt       <= 0;
@@ -150,17 +151,13 @@ begin
 					
 						
 					if pattern_detect_v = "01111111110" then
-						-- Closing delimiter: pattern_detect_v(10) is its leading '0',
-						-- correctly not processed as payload
-												
-						
+											
 						flush_cnt    <= 10;
 						ones_cnt <= 0;
 						byte_bit_cnt <= 0;
 						first_valid_detect <= '1';
 
 					elsif flush_cnt > 0 then
-						-- Drain the opening delimiter bits from the delay line
 						flush_cnt <= flush_cnt - 1;
 						if (flush_cnt = 1) then
 							byte_bit_cnt   <= 0;
@@ -168,11 +165,9 @@ begin
 						end if;
 
 					else
-						-- payload_bit is the 10-cycle-delayed bit: guaranteed not
-						-- part of any delimiter because the full window was just checked
 						payload_bit := pattern_detect_v(10);
 
-						-- Bit-destuffing (operates on the delayed stream)
+						
 						if ones_cnt = 8 and payload_bit = '0' then
 							ones_cnt <= 0;
 							
@@ -199,8 +194,7 @@ begin
 							-- Byte assembler
 							byte_shifter <= byte_shifter(6 downto 0) & descrambled_bit;
 							if byte_bit_cnt = 7 then
-							
-								
+															
 								data_out_8bit <= descrambled_bit & byte_shifter(0) & byte_shifter(1) & byte_shifter(2) & byte_shifter(3) & byte_shifter(4) & byte_shifter(5) & byte_shifter(6);
 																
 								if (first_valid_detect='1') then 
@@ -229,5 +223,85 @@ begin
 		
 		
     end process;
+	
+	
+	
+	aes50_uart_tx: entity work.aes50_uart_tx(rtl)
+
+	port map (
+		i_Clk       		=> clk100_core_i,
+		i_TX_DV     		=> uart_tx_enable,
+		i_TX_Byte   		=> uart_tx_byte,
+		i_CLKS_PER_BIT 		=> uart_clks_per_bit_i,
+		o_TX_Active 		=> uart_tx_busy,
+		o_TX_Serial 		=> uart_o,
+		o_TX_Done   		=> uart_tx_done
+	);
+		
+	
+	aux_rx_uart_data_buffer : entity work.aes50_ring_buffer(rtl)
+	generic map (
+		RAM_WIDTH 		=> 8, 	
+		RAM_DEPTH 		=> 2048 		
+	)
+	port map (
+		clk_i 			=> clk100_core_i,
+		rst_i 			=> rst_i,
+		wr_en_i 		=> data_out_valid,
+		wr_data_i 		=> data_out_8bit,
+		rd_en_i 		=> fifo_to_uart_rd_en,
+		rd_valid_o 		=> open,
+		rd_data_o 		=> fifo_to_uart_data,
+		empty_o 		=> open,
+		empty_next_o 	=> open,
+		full_o 			=> open,
+		full_next_o 	=> open,
+		fill_count_o 	=> fifo_to_uart_count
+	);
+		
+	--controller for uart-tx control from aux-rx-decoder
+	process (clk100_core_i)
+	begin
+		if (rising_edge(clk100_core_i)) then 
+			if (rst_i = '1') then
+				uart_tx_enable <= '0';
+				uart_tx_byte <= (others=>'0');
+				
+				fifo_to_uart_rd_en <= '0';	
+				
+				fifo_uart_tx_state <= 0;
+				
+			else
+			
+				if (fifo_to_uart_count > 0 and uart_tx_busy = '0' and fifo_uart_tx_state=0) then
+					fifo_to_uart_rd_en <= '1';
+					fifo_uart_tx_state <= 1;		
+					
+				elsif (fifo_uart_tx_state = 1) then
+					fifo_to_uart_rd_en <= '0';
+					fifo_uart_tx_state <= 2;
+					
+				elsif (fifo_uart_tx_state = 2) then
+					uart_tx_byte <= fifo_to_uart_data;
+					uart_tx_enable <= '1';
+					fifo_uart_tx_state <= 3;
+					
+				elsif (fifo_uart_tx_state = 3) then
+					uart_tx_enable <= '0';
+					fifo_uart_tx_state <= 4;
+					
+				elsif (fifo_uart_tx_state = 4 and uart_tx_busy = '1') then
+				
+					fifo_uart_tx_state <= 5;					
+					
+				elsif (fifo_uart_tx_state = 5 and uart_tx_done='1') then
+					
+					fifo_uart_tx_state <= 0;
+				end if;
+				
+			end if;
+		end if;
+		
+	end process;
 
 end architecture;

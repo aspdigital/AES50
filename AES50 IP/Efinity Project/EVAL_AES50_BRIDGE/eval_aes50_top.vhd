@@ -54,8 +54,11 @@ port 	(
 	I2C_SDA_OE 					: out  std_logic; 
    
 	--MCU interface
-	FPGA_SPARE_GPIO_UART_IN 	: in  std_logic; 
-	UART_OUT 					: out  std_logic;
+	UART_IN 					: in  std_logic; 	
+	--this is a bidirectional interface. It starts as input after reset to sense the switch-position for i2s/tdm mode and switches over to output for uart-tx later.
+	I2S_TDM_SEL_UART_OUT_IN		: in std_logic;
+	I2S_TDM_SEL_UART_OUT_OUT	: out  std_logic;
+	I2S_TDM_SEL_UART_OUT_OE		: out std_logic;	
 	SAMPLERATE_SELECT 			: in  std_logic; 
 	SYSTEM_CFG 					: in  std_logic_vector(1 downto 0);	
 	AES50_GOOD	 				: out  std_logic; 
@@ -121,7 +124,7 @@ begin
 	CLK_50M_OUT_LO <= '0';	
 	AES50_GOOD <= aes_ok;
 	
-	tdm8_i2s_mode <= FPGA_SPARE_GPIO_UART_IN;
+	
 	
 	TDM_OUT <= tdm_int_o when (tdm8_i2s_mode = '0') else ("000000"&i2s_int_o);
 	
@@ -134,9 +137,12 @@ begin
 			if (LOGIC_PLL_LOCK='0' or LOGIC_RESET = '1') then
 			
 				--if any reset condition is triggered, we'll apply the actual logic reset for 1024 cycles
-				--our internal reset is active-high
+				--our internal reset is active-high				
 				reset <= '1';
 				reset_cnt <= 1023;
+				
+				--disable output so we can monitor the i2s/tdm switch position
+				I2S_TDM_SEL_UART_OUT_OE <= '0';
 			else
 			
 				if (reset_cnt>0) then
@@ -146,6 +152,9 @@ begin
 					--in the last cycle before reset is released, we save back the fs-mode and sys-mode variables
 					if (reset_cnt = 1) then
 					
+						--latch tdm8/i2s
+						tdm8_i2s_mode <= I2S_TDM_SEL_UART_OUT_IN;						
+						
 						--check sample-rate mode => only 44k1 and 48k currently supported
 						if (SAMPLERATE_SELECT = '1') then
 							fs_mode <= "00"; --44k1
@@ -170,6 +179,7 @@ begin
 				
 				else
 					reset <= '0';
+					I2S_TDM_SEL_UART_OUT_OE <= '1';
 				end if;
 			end if;
 		end if;
@@ -225,7 +235,8 @@ begin
 							
 			dbg_o									=> FPGA_DEBUG,
 			
-            uart_o                                  => UART_OUT,
+            uart_o                                  => I2S_TDM_SEL_UART_OUT_OUT,
+			uart_i									=> UART_IN,
             
 			--variables for if coreclock = 100 MHz
 			debug_out_signal_pulse_len_i			=>	1000000,
@@ -238,7 +249,9 @@ begin
 			aes_clk_ok_counter_reference_i			=>	1000000,
 			--Those are the multiplicators needed if we are tdm-master as well as aes-master -> we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
 			mult_clk625_48k_i						=>	8246337,
-			mult_clk625_44k1_i						=>	7576322
+			mult_clk625_44k1_i						=>	7576322,
+			uart_clks_per_bit_i						=> 	868
+			
 			
 			--variables for if coreclock = 80 MHz
 			--debug_out_signal_pulse_len_i			=>	800000,
@@ -252,7 +265,7 @@ begin
 			--Those are the multiplicators needed if we are tdm-master as well as aes-master -> we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
 			--mult_clk625_48k_i						=>	10307922,
 			--mult_clk625_44k1_i					=>	9470403
-			
+			--uart_clks_per_bit_i						=> 	694
 			);
 			
 
