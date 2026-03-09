@@ -38,11 +38,14 @@ Otherwise I might not answer to your request.
 
 ### IP Internal Structure    
 ![AES50 IP Internal Structure](Doc/aes50_internal_structure.png?raw=true "AES50 IP Internal Structure")
-### Use Case A: 48x48 Channel with Multi-TDM8 Interface and access to Auxiliary Data Tunnel
+### Use Case A: 48x48 Channel with Multi-TDM8 Interface and Aux-Data via Uart
 ![48x48 Channel Use-Case](Doc/48x48_tdm8_mode.png?raw=true "48x48 Channel Use-Case")
 
-### Use Case B: 2x2 Channel with simple I2S Interface. No access to Auxiliary Data Tunnel
+### Use Case B: 2x2 Channel with simple I2S Interface and Aux-Data via Uart
 ![2x2 Channel Use-Case](Doc/2x2_i2s_mode.png?raw=true "2x2 Channel Use-Case")
+
+### Use Case C: 48x48 Channel with Multi-TDM8 Interface and Aux-Data via TDM8
+![48x48 Channel Use-Case](Doc/48x48_tdm8_aux_over_tdm_mode.png?raw=true "48x48 Channel and Aux via TDM Use-Case")
 
 ### Top-Module Ports Description
 | Signal                     | Direction | Type                          | Description                             |
@@ -53,7 +56,7 @@ Otherwise I might not answer to your request.
 | **fs_mode_i**              | in       | `std_logic_vector(1 downto 0)` | Sample-Rate Select<br><ul><li>00 → 44.1 kHz</li><li>01 → 48 kHz</li><li>10 → n.a.</li><li>11 → n.a.</li></ul>|
 | **sys_mode_i**             | in       | `std_logic_vector(1 downto 0)` | System-Mode Select<br><ul><li>00 → AES50 Slave & I2S/TDM Master</li><li>01 → AES50 Master & I2S/TDM Master</li><li>10 → AES50 Master & I2S/TDM Slave</li><li>11 → n.a.</li></ul>|               |
 | **tdm8_i2s_mode_i**        | in       | `std_logic`                    | Interface Select<br><ul><li>0 → 48x48 TDM8 (Support for Aux-over-TDM)</li><li>1 → 2x2 I2S (only Aux-over-UART)</li></ul>|
-| **aux_tx_tdm_uart_select_i**| in       | `std_logic`                   | Aux-Data-Mode <br><ul><li>0 → Aux-over-TDM</li><li>1 Aux-over-UART</li></ul>|
+| **aux_tx_tdm_uart_select_i**| in       | `std_logic`                   | Aux-Data-Mode <br><ul><li>0 → Aux-over-TDM</li><li>1 → Aux-over-UART</li></ul>|
 | **rmii_crs_dv_i**          | in       | `std_logic`                    | RMII Data Valid Receive from PHY        |
 | **rmii_rxd_i**             | in       | `std_logic_vector(1 downto 0)` | RMII Data from PHY                      |
 | **rmii_tx_en_o**           | out      | `std_logic`                    | RMII Data Valid Transmit to PHY         |
