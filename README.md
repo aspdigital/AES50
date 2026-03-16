@@ -1,6 +1,10 @@
 # AES50 VHDL IP
 An implementation of the AES50 protocol in vanilla VHDL.
 
+## Warning (March 8th 2026)
+There has been a lot of progress on this project lately - especially regarding the functionality to send and receive data via UART to/from the AUX-data-tunnel.  
+More information and documentation will follow soon.  
+
 ## About the IP
 I started developing this IP around end of 2024 - originally with some other intention.   
 However I decided to make this project public with the purpose to be used in the fabulous [OpenX32 project](https://github.com/OpenMixerProject/OpenX32).  
@@ -18,8 +22,9 @@ Otherwise I might not answer to your request.
 - Audio-Interfaces
   - TDM-8 (6x In + 6x Out) for full 48x48 channel access
   - I2S (1x In + 1x Out) for a reduced 2x2 channel access (the other 46x46 channels are ignored)
-- Aux-Data over TDM
-  - Access the auxiliary-data-channel of AES50 (which is e.g. used for headamp-control) through TDM-Interface
+- Support for Aux-Data-Tunnel (which is e.g. used for headamp control) over TDM or UART
+  - Tunnels the auxiliary data channel through the TDM interface  
+  - Send and receive data to/from the auxiliary data tunnel via UART 
 - Operation Modes
   - AES50-Master + TDM/I2S Master (Timing Reference: Local Oscillator)
   - AES50-Master + TDM/I2S Slave  (Timing Reference: External I2S/TDM Device)
@@ -33,11 +38,14 @@ Otherwise I might not answer to your request.
 
 ### IP Internal Structure    
 ![AES50 IP Internal Structure](Doc/aes50_internal_structure.png?raw=true "AES50 IP Internal Structure")
-### Use Case A: 48x48 Channel with Multi-TDM8 Interface and access to Auxiliary Data Tunnel
+### Use Case A: 48x48 Channel with Multi-TDM8 Interface and Aux-Data via Uart
 ![48x48 Channel Use-Case](Doc/48x48_tdm8_mode.png?raw=true "48x48 Channel Use-Case")
 
-### Use Case B: 2x2 Channel with simple I2S Interface. No access to Auxiliary Data Tunnel
+### Use Case B: 2x2 Channel with simple I2S Interface and Aux-Data via Uart
 ![2x2 Channel Use-Case](Doc/2x2_i2s_mode.png?raw=true "2x2 Channel Use-Case")
+
+### Use Case C: 48x48 Channel with Multi-TDM8 Interface and Aux-Data via TDM8
+![48x48 Channel Use-Case](Doc/48x48_tdm8_aux_over_tdm_mode.png?raw=true "48x48 Channel and Aux via TDM Use-Case")
 
 ### Top-Module Ports Description
 | Signal                     | Direction | Type                          | Description                             |
@@ -47,7 +55,8 @@ Otherwise I might not answer to your request.
 | **rst_i**                  | in       | `std_logic`                    | Synchronous Reset (100 MHz clock-domain)|
 | **fs_mode_i**              | in       | `std_logic_vector(1 downto 0)` | Sample-Rate Select<br><ul><li>00 → 44.1 kHz</li><li>01 → 48 kHz</li><li>10 → n.a.</li><li>11 → n.a.</li></ul>|
 | **sys_mode_i**             | in       | `std_logic_vector(1 downto 0)` | System-Mode Select<br><ul><li>00 → AES50 Slave & I2S/TDM Master</li><li>01 → AES50 Master & I2S/TDM Master</li><li>10 → AES50 Master & I2S/TDM Slave</li><li>11 → n.a.</li></ul>|               |
-| **tdm8_i2s_mode_i**        | in       | `std_logic`                    | Interface Select<br><ul><li>0 → 48x48 TDM8 (with Aux-Data)</li><li>1 → 2x2 I2S (no Aux-Data)</li></ul>|
+| **tdm8_i2s_mode_i**        | in       | `std_logic`                    | Interface Select<br><ul><li>0 → 48x48 TDM8 (Support for Aux-over-TDM)</li><li>1 → 2x2 I2S (only Aux-over-UART)</li></ul>|
+| **aux_tx_tdm_uart_select_i**| in       | `std_logic`                   | Aux-Data-Mode <br><ul><li>0 → Aux-over-TDM</li><li>1 → Aux-over-UART</li></ul>|
 | **rmii_crs_dv_i**          | in       | `std_logic`                    | RMII Data Valid Receive from PHY        |
 | **rmii_rxd_i**             | in       | `std_logic_vector(1 downto 0)` | RMII Data from PHY                      |
 | **rmii_tx_en_o**           | out      | `std_logic`                    | RMII Data Valid Transmit to PHY         |
@@ -77,24 +86,26 @@ Otherwise I might not answer to your request.
 | **i2s_o**                  | out      | `std_logic`                    | I2S Output (only needed in 2x2 mode)                             |
 | **aes_ok_o**               | out      | `std_logic`                    | AES50 Link Status  (high when connection established)         |
 | **dbg_o**                  | out      | `std_logic_vector(7 downto 0)` | Various internal debug signals                          |
-| **uart_o**               	| out      | `std_logic`                    | UART output (decoded bytes from the AES50 AUX-RX tunnel)     |
-### Aux over TDM Feature
+| **uart_o**               	 | out      | `std_logic`                    | UART output (received data from the AES50 AUX tunnel)     |
+| **uart_i**               	 | in      | `std_logic`                     | UART input (data to send over AES50 AUX-tunnel)     |
+### Aux Data Tunnel
 AES50 provides (as part of the protocol) an auxiliary data channel with a fixed bandwidth of roughly 5 Mbit/s (the exact rate depends on the selected sample rate, as the auxiliary data stream is synchronous with the audio transmission).  
 According to the AES50 specification, there was a proposal (though not mandatory) to use standard Ethernet frames that could be tunneled through this auxiliary data channel - (ever wondered about the mysterious Ethernet port on the DN9630?) -> Therefore I assume that this proposed approach using virtual Ethernet frames is also used in other AES50 devices on the market.  
-However, additional mechanisms are required to transmit Ethernet frames through the auxiliary channel - specifically bit-stuffing and data-scrambling. These are not implemented in this IP core yet. As a result, we currently cannot directly control head-amps or similar.  
-Since the bitstream is synchronous with the audio transmission, this IP enables sending and receiving the bitstream over the TDM8 interface. Internally, the IP handles the bitstream as 16-bit words, and the TDM module distributes the auxiliary data evenly across the eight TDM slots as 24-bit “samples.” The extra 8 bits act as an overlay protocol to ensure correct interpretation of the auxiliary words when tunneling them over a 3rd party audio-transportation-medium.  If the TDM-Aux-RX/TX pins of two instances of this IP are cross-connected, it allows transparent tunneling of the auxiliary data channel as long as synchronicity and bit-consistency is ensured. A similar concept appears to be implemented in the Appsys Multiverter, which tunnels AES50 auxiliary data as eight audio channels through a Dante network to maintain head-amp remote control.
+However, additional mechanisms are required to transmit Ethernet frames through the auxiliary channel - specifically bit-stuffing and data-scrambling. 
 
-As a first reference for the datarate you can assume:
-- 44× 16-bit aux words in the same time frame as 6 audio samples at 48 kHz
-- 88× 16-bit aux words in the same time frame as 11 (not 12) audio samples at 44.1 kHz
+#### Aux Data over TDM  
+Since the bitstream is synchronous with the audio transmission, this IP enables sending and receiving the aux-bitstream over the TDM8 interface.  
+Internally, the IP handles the bitstream as 16-bit words, and the TDM module distributes the auxiliary data evenly across the eight TDM slots as 24-bit “samples.”  
+The extra 8 bits act as an overlay protocol to ensure correct interpretation of the auxiliary words when tunneling them over a 3rd party audio-transportation-medium.  
+If the TDM-Aux-RX/TX pins of two instances of this IP are cross-connected, it allows transparent tunneling of the auxiliary data channel as long as synchronicity and bit-consistency is ensured.  
+A similar concept appears to be implemented in the Appsys Multiverter, which tunnels AES50 auxiliary data as eight audio channels through a Dante network to maintain head-amp remote control.
+
 - See further details in the TDM module implementation
 
-Anyhow - the IP core is prepared to be extended in terms of aux-data functionality (and its possibilities) later on. Therefore, the internal Data-FIFOs between TDM and the AES50 RX/TX Module are separated for Audio and Auxiliary-Data. 
-
-### Aux Data Receive (Update March 5th 2026)
-The IP can now decode the receiving side of the AES50 AUX data-tunnel and will send the data via UART to the outside world.  
-The actual protocol which is e.g. used for headamp control is still under investigation as the AES50 specification itself is only defining how the data-tunnel works.  
-See here an example print-out of a Wing-Rack connected.  
+#### Aux Data over UART
+It is also possible to send and receive data over the aux-data-tunnel with a UART connection.    
+The actual protocol which is e.g. used for headamp control is still under investigation as the AES50 specification itself is only defining how the data-tunnel works.     
+See here an example print-out of a Wing-Rack connected.    
 ![Example UART Printout](Doc/realterm_uart_aux_rx.png?raw=true "Aux Uart Printout")
 
 ### Audio Interface Timing

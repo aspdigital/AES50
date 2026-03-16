@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<efxpt:design_db name="EVAL_AES50_BRIDGE" device_def="T20Q100F3" version="2025.1.110.5.9" db_version="20252006" last_change_date="Thu Mar  5 14:29:03 2026" xmlns:efxpt="http://www.efinixinc.com/peri_design_db" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.efinixinc.com/peri_design_db peri_design_db.xsd ">
+<efxpt:design_db name="EVAL_AES50_BRIDGE" device_def="T20Q100F3" version="2025.1.110.5.9" db_version="20252006" last_change_date="Sun Mar  8 15:55:11 2026" xmlns:efxpt="http://www.efinixinc.com/peri_design_db" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.efinixinc.com/peri_design_db peri_design_db.xsd ">
     <efxpt:device_info>
         <efxpt:iobank_info>
             <efxpt:iobank name="1A_1B_1C" iostd="3.3 V LVTTL / LVCMOS"/>
@@ -99,9 +99,6 @@
         <efxpt:gpio name="FPGA_DEBUG[7]" gpio_def="GPIOL_46" mode="output" bus_name="FPGA_DEBUG" is_lvds_gpio="false" io_standard="3.3 V LVTTL / LVCMOS">
             <efxpt:output_config name="FPGA_DEBUG[7]" name_ddio_lo="" register_option="none" clock_name="" is_clock_inverted="false" is_slew_rate="false" tied_option="none" ddio_type="none" drive_strength="1"/>
         </efxpt:gpio>
-        <efxpt:gpio name="FPGA_SPARE_GPIO_UART_IN" gpio_def="GPIOL_20" mode="input" bus_name="" is_lvds_gpio="false" io_standard="3.3 V LVTTL / LVCMOS">
-            <efxpt:input_config name="FPGA_SPARE_GPIO_UART_IN" name_ddio_lo="" conn_type="normal" is_register="false" clock_name="" is_clock_inverted="false" pull_option="none" is_schmitt_trigger="false" ddio_type="none"/>
-        </efxpt:gpio>
         <efxpt:gpio name="I2C_SCL" gpio_def="GPIOR_116" mode="inout" bus_name="" is_lvds_gpio="false" io_standard="3.3 V LVTTL / LVCMOS">
             <efxpt:input_config name="I2C_SCL_IN" name_ddio_lo="" conn_type="normal" is_register="false" clock_name="" is_clock_inverted="false" pull_option="none" is_schmitt_trigger="false" ddio_type="none"/>
             <efxpt:output_config name="I2C_SCL_OUT" name_ddio_lo="" register_option="none" clock_name="" is_clock_inverted="false" is_slew_rate="false" tied_option="none" ddio_type="none" drive_strength="1"/>
@@ -111,6 +108,11 @@
             <efxpt:input_config name="I2C_SDA_IN" name_ddio_lo="" conn_type="normal" is_register="false" clock_name="" is_clock_inverted="false" pull_option="none" is_schmitt_trigger="false" ddio_type="none"/>
             <efxpt:output_config name="I2C_SDA_OUT" name_ddio_lo="" register_option="none" clock_name="" is_clock_inverted="false" is_slew_rate="false" tied_option="none" ddio_type="none" drive_strength="1"/>
             <efxpt:output_enable_config name="I2C_SDA_OE" is_register="false" clock_name="" is_clock_inverted="false"/>
+        </efxpt:gpio>
+        <efxpt:gpio name="I2S_TDM_SEL_UART_OUT" gpio_def="GPIOL_20" mode="inout" bus_name="" is_lvds_gpio="false" io_standard="3.3 V LVTTL / LVCMOS">
+            <efxpt:input_config name="I2S_TDM_SEL_UART_OUT_IN" name_ddio_lo="" conn_type="normal" is_register="false" clock_name="" is_clock_inverted="false" pull_option="none" is_schmitt_trigger="false" ddio_type="none"/>
+            <efxpt:output_config name="I2S_TDM_SEL_UART_OUT_OUT" name_ddio_lo="" register_option="none" clock_name="" is_clock_inverted="false" is_slew_rate="false" tied_option="none" ddio_type="none" drive_strength="1"/>
+            <efxpt:output_enable_config name="I2S_TDM_SEL_UART_OUT_OE" is_register="false" clock_name="" is_clock_inverted="false"/>
         </efxpt:gpio>
         <efxpt:gpio name="LED" gpio_def="GPIOB_CLKP0" mode="output" bus_name="" is_lvds_gpio="true" io_standard="3.3 V LVTTL / LVCMOS">
             <efxpt:output_config name="LED" name_ddio_lo="" register_option="none" clock_name="" is_clock_inverted="false" is_slew_rate="false" tied_option="none" ddio_type="none" drive_strength="1"/>
@@ -179,8 +181,8 @@
             <efxpt:output_config name="TDM_WCLK_OUT" name_ddio_lo="" register_option="none" clock_name="" is_clock_inverted="false" is_slew_rate="false" tied_option="none" ddio_type="none" drive_strength="1"/>
             <efxpt:output_enable_config name="TDM_WCLK_OE" is_register="false" clock_name="" is_clock_inverted="false"/>
         </efxpt:gpio>
-        <efxpt:gpio name="UART_OUT" gpio_def="GPIOL_21" mode="output" bus_name="" is_lvds_gpio="false" io_standard="3.3 V LVTTL / LVCMOS">
-            <efxpt:output_config name="UART_OUT" name_ddio_lo="" register_option="none" clock_name="" is_clock_inverted="false" is_slew_rate="false" tied_option="none" ddio_type="none" drive_strength="1"/>
+        <efxpt:gpio name="UART_IN" gpio_def="GPIOL_21" mode="input" bus_name="" is_lvds_gpio="false" io_standard="3.3 V LVTTL / LVCMOS">
+            <efxpt:input_config name="UART_IN" name_ddio_lo="" conn_type="normal" is_register="false" clock_name="" is_clock_inverted="false" pull_option="none" is_schmitt_trigger="false" ddio_type="none"/>
         </efxpt:gpio>
         <efxpt:global_unused_config state="input with weak pullup"/>
         <efxpt:bus name="AES_RXD" mode="input" msb="1" lsb="0"/>
