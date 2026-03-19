@@ -53,8 +53,8 @@ entity aes50_clockmanager is
 
     port (
         --system clock inputs
-        clk100_i : in std_logic;
-        rst_i    : in std_logic;
+        clk100_i : in std_logic;        -- main logic clock
+        rst_i    : in std_logic;        -- reset in that domain
 
         --samplerate and operation mode
         sys_mode_i      : in std_logic_vector(1 downto 0);
@@ -203,8 +203,6 @@ begin
 
 
     --pll clk interface
-
-
     clk_to_pll_o <= aes_clk_in when (sys_mode_i = "00" and rst_i = '0') else
                     clk_625MHz      when (sys_mode_i = "01" and rst_i = '0') else
                     bclk_readback_i when (sys_mode_i = "10" and rst_i = '0') else
@@ -217,7 +215,7 @@ begin
                         mult_clk_x4;    --sys_mode=10 and tdm8-mode
 
 
-
+    -- Generate a 6.25 MHz reference clock for the CS2100.
     process (clk100_i)
     begin
 
