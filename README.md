@@ -1,10 +1,6 @@
 # AES50 VHDL IP
 An implementation of the AES50 protocol in vanilla VHDL.
 
-## Warning (March 8th 2026)
-There has been a lot of progress on this project lately - especially regarding the functionality to send and receive data via UART to/from the AUX-data-tunnel.  
-More information and documentation will follow soon.  
-
 ## About the IP
 I started developing this IP around end of 2024 - originally with some other intention.   
 However I decided to make this project public with the purpose to be used in the fabulous [OpenX32 project](https://github.com/OpenMixerProject/OpenX32).  
@@ -108,6 +104,23 @@ The actual protocol which is e.g. used for headamp control is still under invest
 See here an example print-out of a Wing-Rack connected.    
 ![Example UART Printout](Doc/realterm_uart_aux_rx.png?raw=true "Aux Uart Printout")
 
+#### Head Amp Remote Control Example
+A small [Arduino example](RPI_Pico_2040_HA_Remote_Example/RPI_Pico_2040_HA_Remote_Example.ino) shows how to self-identify and remotely control the head amps (gain & phantom power) of AES50 devices.
+
+This example uses a Raspberry Pi Pico (RP2040), which acts as a command bridge between a computer and the UART terminal connected to the FPGA/AES50 IP core.  
+The device identifies itself as an X32 Full-Size and the head amps can be controlled via a serial terminal using the following command examples:
+
+- `gain:ch1@20` → Sets gain on channel 1 to +20 dB  
+- `phantom:ch5@1` → Enables +48V on channel 5  
+- `phantom:ch5@0` → Disables +48V on channel 5  
+
+The gain-ranges may be interpreted differently with different devices. You will find some info in the comments of the code-example.  
+This example is currently configured for controlling a Wing. Make sure that Remote-HA-Control over AES50 is enabled in the console settings.  
+
+Special thanks to Christian Nöding for reverse-engineering the proprietary protocol and Thomas Zint (Behringer R&D) for helping with the checksum calculation.  
+
+Note: The transmission of channel-names does not work yet.
+
 ### Audio Interface Timing
 
 Warning: When this IP is in I2S/TDM slave-mode (sys_mode_i = "10"), make ultimately sure, that BCLK/WCLK is stable before releasing the IP's reset.  
@@ -149,8 +162,8 @@ WCLK must be only high for one BCLK pulse (but can be longer of course)
 - Constraining and verification of input- & output timings (RMII, TDM, etc..)
 - Bit Transparency Testing
 - Refactoring of TDM SerDes
-- Implement Interface to enable use of Aux-Data-Tunnel over e.g. UART or SPI etc..
 - Implement 88k2/96k mode
+- Check why the Arduino Code-Example is not transmitting channel-names correctly.
   
 #### Random Info
 - The core-clock of this IP can also run at a reduced clock-speed of 80 MHz (instead of 100 MHz) if I2S mode only is used. Some internal timing-reference values must be changed for this (see in the top VHDL module in the efinity project)
