@@ -40,7 +40,7 @@ entity aes50_aux_decoder is
         aux_i                   : in  std_logic_vector(15 downto 0);
 		aux_data_start_marker_i : in  std_logic; 
         aux_in_rd_en_o          : out std_logic;
-        fifo_fill_count_aux_i   : in  integer range 176 - 1 downto 0;
+        fifo_fill_count_aux_i   : in  natural range 0 to 176 - 1;
         
 		uart_clks_per_bit_i		: in integer;
         uart_o					: out std_logic
@@ -49,19 +49,19 @@ end aes50_aux_decoder;
 
 architecture rtl of aes50_aux_decoder is
 
-    signal bit_idx              : integer range 0 to 15 := 0;
-    signal is_processing        : std_logic := '0';
-    signal fifo_wait_data       : integer range 0 to 3 := 0;
+    signal bit_idx              : natural range 0 to 15 			:= 0;
+    signal is_processing        : std_logic 						:= '0';
+    signal fifo_wait_data       : natural range 0 to 3 				:= 0;
     signal shift_reg_in         : std_logic_vector(15 downto 0);
-    signal current_start_mkr    : std_logic := '0';    
-    signal first_valid_detect   : std_logic := '0';    
-    signal descramble_reg       : std_logic_vector(8 downto 0) := (others => '0'); 
-    signal pattern_detect       : std_logic_vector(10 downto 0) := (others => '0');	
-    signal ones_cnt             : integer range 0 to 15 := 0;    
-    signal byte_shifter         : std_logic_vector(7 downto 0) := (others => '0');
-    signal byte_bit_cnt         : integer range 0 to 7 := 0;
-    signal flush_cnt            : integer range 0 to 11 := 0;
-    signal frame_reset_pending  : std_logic := '0';
+    signal current_start_mkr    : std_logic 						:= '0';    
+    signal first_valid_detect   : std_logic 						:= '0';    
+    signal descramble_reg       : std_logic_vector(8 downto 0) 		:= (others => '0'); 
+    signal pattern_detect       : std_logic_vector(10 downto 0) 	:= (others => '0');	
+    signal ones_cnt             : natural range 0 to 15 			:= 0;    
+    signal byte_shifter         : std_logic_vector(7 downto 0) 		:= (others => '0');
+    signal byte_bit_cnt         : natural range 0 to 7 				:= 0;
+    signal flush_cnt            : natural range 0 to 11 			:= 0;
+    signal frame_reset_pending  : std_logic 						:= '0';
 	
     signal data_out_8bit        : std_logic_vector(7 downto 0);
     signal data_out_valid       : std_logic;
@@ -74,8 +74,8 @@ architecture rtl of aes50_aux_decoder is
 	
     signal fifo_to_uart_data    : std_logic_vector(7 downto 0);
     signal fifo_to_uart_rd_en   : std_logic;
-    signal fifo_to_uart_count   : integer range 2047 downto 0;
-    signal fifo_uart_tx_state   : integer range 15 downto 0;
+    signal fifo_to_uart_count   : natural range 0 to 2047;
+    signal fifo_uart_tx_state   : natural range 0 to 15;
 
 begin
 
@@ -104,23 +104,24 @@ begin
                 data_out_valid  <= '0';
                 aux_in_rd_en_o  <= '0';
 				
-                if is_processing = '0' and fifo_wait_data = 0 then
-                    if fifo_fill_count_aux_i > 0 then
-                        aux_in_rd_en_o <= '1';
-                        fifo_wait_data  <= 1;
-                    end if;
-					
-                elsif fifo_wait_data = 1 then
-                    fifo_wait_data <= 2;
-					
-                elsif fifo_wait_data = 2 then
-                    shift_reg_in      <= aux_i;
-                    current_start_mkr <= aux_data_start_marker_i;
-                    bit_idx           <= 0;
-                    fifo_wait_data    <= 0;
-                    is_processing     <= '1';
-                end if;
-
+				case fifo_wait_data is
+					when 0 =>
+						if (is_processing = '0' and fifo_fill_count_aux_i > 0) then
+							aux_in_rd_en_o <= '1';
+							fifo_wait_data  <= 1;
+						end if;
+					when 1 =>
+						fifo_wait_data <= 2;
+					when 2 => 
+						shift_reg_in      <= aux_i;
+						current_start_mkr <= aux_data_start_marker_i;
+						bit_idx           <= 0;
+						fifo_wait_data    <= 0;
+						is_processing     <= '1';
+					when others => null;
+				end case;
+				
+   
                 if is_processing = '1' then
 
                     if G_MSB_FIRST then

@@ -37,7 +37,7 @@ entity aes50_aux_encoder is
         rst_i                   : in  std_logic;
         
         uart_i                  : in  std_logic;
-        uart_clks_per_bit_i     : in  integer;
+        uart_clks_per_bit_i     : in  natural;
         uart_timeout_clks_i     : in  integer;
                        
         fs_mode_i               : in  std_logic_vector(1 downto 0); 
@@ -52,36 +52,36 @@ end aes50_aux_encoder;
 architecture rtl of aes50_aux_encoder is
 
     -- UART & FIFO Signals
-    signal uart_rx_dv          : std_logic;
-    signal uart_rx_data        : std_logic_vector(7 downto 0);
-    signal fifo_rd_en          : std_logic;
-    signal fifo_data           : std_logic_vector(7 downto 0);
-    signal fifo_count          : integer range 0 to 2047;
-    signal fifo_empty          : std_logic;
+    signal uart_rx_dv          	: std_logic;
+    signal uart_rx_data        	: std_logic_vector(7 downto 0);
+    signal fifo_rd_en          	: std_logic;
+    signal fifo_data           	: std_logic_vector(7 downto 0);
+    signal fifo_count          	: natural range 0 to 2047;
+    signal fifo_empty          	: std_logic;
 
 	signal fifo_temp			: std_logic_vector(7 downto 0);
 	
     -- Timeout Logic
-    signal timeout_cnt         : integer := 0;
-    signal data_ready_to_send  : std_logic := '0';
+    signal timeout_cnt         	: natural 			:= 0;
+    signal data_ready_to_send  	: std_logic 		:= '0';
 
     -- Encoder States
     type enc_state_t is (SEND_IDLE_DELIM, SEND_FRAME_DELIM_START, WAIT_FIFO, WAIT_FIFO2, SEND_DATA, SEND_STUFF, SEND_FRAME_DELIM_END);
     signal enc_state : enc_state_t := SEND_IDLE_DELIM;
 
     -- Bitstream Signals
-    signal scramble_reg        : std_logic_vector(8 downto 0) := (others => '0');
-    signal ones_cnt            : integer range 0 to 8 := 0;
-    signal delim_cnt           : integer range 0 to 10 := 0;
-    signal byte_bit_cnt        : integer range 0 to 7 := 0;
+    signal scramble_reg        : std_logic_vector(8 downto 0) 	:= (others => '0');
+    signal ones_cnt            : natural range 0 to 8 			:= 0;
+    signal delim_cnt           : natural range 0 to 10 			:= 0;
+    signal byte_bit_cnt        : natural range 0 to 7 			:= 0;
     signal data_reg            : std_logic_vector(7 downto 0);
     
     -- Packer Signals
-    signal out_shift_reg       : std_logic_vector(15 downto 0) := (others => '0');
-    signal out_bit_idx         : integer range 0 to 15 := 0;
-    signal word_cnt            : integer range 0 to 127 := 0;
-    signal target_word_count   : integer range 0 to 127 := 44;
-    signal block_active        : std_logic := '0';
+    signal out_shift_reg       : std_logic_vector(15 downto 0) 	:= (others => '0');
+    signal out_bit_idx         : natural range 0 to 15 			:= 0;
+    signal word_cnt            : natural range 0 to 127 		:= 0;
+    signal target_word_count   : natural range 0 to 127 		:= 44;
+    signal block_active        : std_logic 						:= '0';
 
 begin
 

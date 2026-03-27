@@ -102,7 +102,7 @@ architecture rtl of eval_aes50_top is
 
 	--variables for clean reset generation
 	signal reset 		: std_logic;
-	signal reset_cnt 	: integer range 1023 downto 0;
+	signal reset_cnt 	: natural range 0 to 1023;
 	
 	--signals for internal samplerate-mode and system-mode
 	signal fs_mode		: std_logic_vector (1 downto 0);

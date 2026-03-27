@@ -42,7 +42,7 @@ entity aes50_ring_buffer is
     full_next_o 		: out std_logic;
 
     -- The number of elements in the FIFO
-    fill_count_o 		: out integer range RAM_DEPTH - 1 downto 0
+    fill_count_o 		: out natural range RAM_DEPTH - 1 downto 0
   );
 end aes50_ring_buffer;
 
@@ -51,13 +51,13 @@ architecture rtl of aes50_ring_buffer is
   type ram_type is array (0 to RAM_DEPTH - 1) of std_logic_vector(wr_data_i'range);
   signal ram : ram_type;
 
-  subtype index_type is integer range ram_type'range;
+  subtype index_type is natural range ram_type'range;
   signal head : index_type;
   signal tail : index_type;
 
   signal empty_i : std_logic;
   signal full_i : std_logic;
-  signal fill_count_i : integer range RAM_DEPTH - 1 downto 0;
+  signal fill_count_i : natural range 0 to RAM_DEPTH - 1;
 
   -- Increment and wrap
   procedure incr(signal index : inout index_type) is

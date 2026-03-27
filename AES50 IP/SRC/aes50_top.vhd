@@ -78,7 +78,7 @@ port (
 		clk_1024xfs_from_pll_i				: in  std_logic; 
 		pll_lock_n_i						: in  std_logic; 
 		clk_to_pll_o						: out std_logic;
-		pll_mult_value_o					: out integer;
+		pll_mult_value_o					: out natural;
 		pll_init_busy_i						: in  std_logic; 
 		
 		--tdm/i2s clk interface
@@ -107,21 +107,21 @@ port (
 		uart_i								: in std_logic;
 		
 		--variables
-		debug_out_signal_pulse_len_i		: in integer range 1000000 downto 0;		-- 1000000@100MHz
-		first_transmit_start_counter_48k_i	: in integer range 5000000 downto 0;		-- 4249500@100MHz
-		first_transmit_start_counter_44k1_i	: in integer range 5000000 downto 0;		-- 4610800@100MHz	
+		debug_out_signal_pulse_len_i		: in natural range 0 to 1000000;		-- 1000000@100MHz
+		first_transmit_start_counter_48k_i	: in natural range 0 to 5000000;		-- 4249500@100MHz
+		first_transmit_start_counter_44k1_i	: in natural range 0 to 5000000;		-- 4610800@100MHz	
 		
-		wd_aes_clk_timeout_i				: in integer range 50 downto 0; 			-- 50@100MHz
-		wd_aes_rx_dv_timeout_i			    : in integer range 20000 downto 0;			-- 15000@100MHz	
-		mdix_timer_1ms_reference_i			: in integer range 100000 downto 0;			-- 100000@100MHz
-		aes_clk_ok_counter_reference_i		: in integer range 1000000 downto 0;		-- 1000000@100MHz
+		wd_aes_clk_timeout_i				: in natural range 0 to 50; 			-- 50@100MHz
+		wd_aes_rx_dv_timeout_i			    : in natural range 0 to 20000;			-- 15000@100MHz	
+		mdix_timer_1ms_reference_i			: in natural range 0 to 100000;			-- 100000@100MHz
+		aes_clk_ok_counter_reference_i		: in natural range 0 to 1000000;		-- 1000000@100MHz
 		--Those are the multiplicators needed if we are tdm-master as well as aes-master -> we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
-		mult_clk625_48k_i					: in integer;								-- 8246337@100MHz
-		mult_clk625_44k1_i					: in integer;								-- 7576322@100MHz
+		mult_clk625_48k_i					: in natural;								-- 8246337@100MHz
+		mult_clk625_44k1_i					: in natural;								-- 7576322@100MHz
 		
 		--uart speed configuration
-		uart_clks_per_bit_i					: in integer;								--868 for 115.200 baud @ 100 MHz
-		uart_timeout_clks_i     			: in integer								--1000000 for 10ms @ 100 MHz
+		uart_clks_per_bit_i					: in natural;								--868 for 115.200 baud @ 100 MHz
+		uart_timeout_clks_i     			: in natural								--1000000 for 10ms @ 100 MHz
 		);
 end aes50_top;
 
@@ -132,7 +132,7 @@ architecture rtl of aes50_top is
 
 	
 	--Counter for Phy Reset Signal
-	signal phy_rst_cnt										: integer range 100000 downto 0;
+	signal phy_rst_cnt										: natural range 0 to 100000;
 
 	--Health Signals
 	signal audio_clock_ok     								: std_logic;
@@ -154,7 +154,7 @@ architecture rtl of aes50_top is
 	signal eth_rst_50M_z, eth_rst_50M_zz					: std_logic;
 	
 	--Signals for scheduling start of operation
-	signal first_transmit_start_counter 					: integer range 5000000 downto 0;
+	signal first_transmit_start_counter 					: natural range 0 to 5000000;
 	signal first_transmit_start_counter_active 				: std_logic;
 	signal enable_tx_assm_start								: std_logic;
 	
@@ -178,67 +178,67 @@ architecture rtl of aes50_top is
 	
 	
 	--fifo-signals from aes-rx to tdm
-	signal 	fifo_aes_to_tdm_audio_data						: std_logic_vector (23 downto 0);
-	signal  fifo_aes_to_tdm_audio_ch0_marker				: std_logic := '0';
-	signal	fifo_aes_to_tdm_aux_data						: std_logic_vector (15 downto 0);
-	signal	fifo_aes_to_tdm_aux_start_marker				: std_logic;
-	signal	fifo_aes_to_tdm_audio_rd_en						: std_logic := '0';
-	signal	fifo_aes_to_tdm_aux_rd_en						: std_logic := '0';
-	signal	fifo_aes_to_tdm_audio_fifo_count 				: integer range 1056 - 1 downto 0;
-	signal	fifo_aes_to_tdm_aux_fifo_count 					: integer range 176 - 1 downto 0;	
+	signal fifo_aes_to_tdm_audio_data						: std_logic_vector (23 downto 0);
+	signal fifo_aes_to_tdm_audio_ch0_marker					: std_logic := '0';
+	signal fifo_aes_to_tdm_aux_data							: std_logic_vector (15 downto 0);
+	signal fifo_aes_to_tdm_aux_start_marker					: std_logic;
+	signal fifo_aes_to_tdm_audio_rd_en						: std_logic := '0';
+	signal fifo_aes_to_tdm_aux_rd_en						: std_logic := '0';
+	signal fifo_aes_to_tdm_audio_fifo_count 				: natural range 0 to 1056 - 1;
+	signal fifo_aes_to_tdm_aux_fifo_count 					: natural range 0 to 176 - 1;	
 	
 	
 	--fifo signals from aes-rx to UART
 	signal fifo_aes_to_uart_aux_data						: std_logic_vector (15 downto 0);
 	signal fifo_aes_to_uart_aux_start_marker				: std_logic;
 	signal fifo_aes_to_uart_aux_rd_en						: std_logic;
-	signal fifo_aes_to_uart_aux_fifo_count					: integer range 176 - 1 downto 0;
+	signal fifo_aes_to_uart_aux_fifo_count					: natural range 0 to 176 - 1;
 	
 	
 	--fifo signals from tdm to aes-tx
-	signal 	fifo_tdm_to_aes_audio_data						: std_logic_vector (23 downto 0) := (others=>'0');
-	signal  fifo_tdm_to_aes_audio_ch0_marker				: std_logic := '0';
-	signal 	fifo_tdm_to_aes_audio_wr_en						: std_logic := '0';
+	signal fifo_tdm_to_aes_audio_data						: std_logic_vector (23 downto 0) := (others=>'0');
+	signal fifo_tdm_to_aes_audio_ch0_marker					: std_logic := '0';
+	signal fifo_tdm_to_aes_audio_wr_en						: std_logic := '0';
 	
 	--fifo signals from tdm to aux-mux
-	signal 	fifo_tdm_to_mux_aux_data						: std_logic_vector (15 downto 0) := (others=>'0');
-	signal  fifo_tdm_to_mux_aux_start_marker				: std_logic := '0';
-	signal 	fifo_tdm_to_mux_aux_wr_en						: std_logic := '0';
+	signal fifo_tdm_to_mux_aux_data							: std_logic_vector (15 downto 0) := (others=>'0');
+	signal fifo_tdm_to_mux_aux_start_marker					: std_logic := '0';
+	signal fifo_tdm_to_mux_aux_wr_en						: std_logic := '0';
 	
 	--fifo signals from aux-uart-encoder to aux-mux
-	signal 	fifo_auxenc_to_mux_aux_data						: std_logic_vector (15 downto 0) := (others=>'0');
-	signal  fifo_auxenc_to_mux_aux_start_marker				: std_logic := '0';
-	signal 	fifo_auxenc_to_mux_aux_wr_en					: std_logic := '0';
+	signal fifo_auxenc_to_mux_aux_data						: std_logic_vector (15 downto 0) := (others=>'0');
+	signal fifo_auxenc_to_mux_aux_start_marker				: std_logic := '0';
+	signal fifo_auxenc_to_mux_aux_wr_en						: std_logic := '0';
 	
 	--fifo signals from aux-mux to aes50-tx
-	signal 	fifo_mux_to_aes_aux_data						: std_logic_vector (15 downto 0) := (others=>'0');
-	signal  fifo_mux_to_aes_aux_start_marker				: std_logic := '0';
-	signal 	fifo_mux_to_aes_aux_wr_en						: std_logic := '0';
+	signal fifo_mux_to_aes_aux_data							: std_logic_vector (15 downto 0) := (others=>'0');
+	signal fifo_mux_to_aes_aux_start_marker					: std_logic := '0';
+	signal fifo_mux_to_aes_aux_wr_en						: std_logic := '0';
 	
-	signal  aux_encoder_request_data						: std_logic := '0';
+	signal aux_encoder_request_data							: std_logic := '0';
 	
 	--panic signals
-	signal  fifo_aestx_misalign_panic						: std_logic := '0';
-	signal  fifo_tdm_misalign_panic							: std_logic := '0';
+	signal fifo_aestx_misalign_panic						: std_logic := '0';
+	signal fifo_tdm_misalign_panic							: std_logic := '0';
 	
 	
 	
 	--signals for assm handling
-	signal 	assm_remote										: std_logic;
-	signal 	assm_self_gemerated								: std_logic;		
-	signal 	assm_active_edge								: std_logic_vector(1 downto 0);	
-	signal 	assm_debug_out									: std_logic;	
-	signal 	assm_debug_out_signal_counter					: integer range 1000000 downto 0;
+	signal assm_remote										: std_logic;
+	signal assm_self_gemerated								: std_logic;		
+	signal assm_active_edge									: std_logic_vector(1 downto 0);	
+	signal assm_debug_out									: std_logic;	
+	signal assm_debug_out_signal_counter					: natural range 0 to 1000000;
 
-	signal 	assm_tx_is_active 								: std_logic;
-	signal 	assm_tx_is_active_edge							: std_logic_vector(1 downto 0);
-	signal 	assm_tx_is_active_debug_out						: std_logic;	
-	signal 	assm_tx_is_active_debug_out_signal_counter		: integer range 1000000 downto 0;
+	signal assm_tx_is_active 								: std_logic;
+	signal assm_tx_is_active_edge							: std_logic_vector(1 downto 0);
+	signal assm_tx_is_active_debug_out						: std_logic;	
+	signal assm_tx_is_active_debug_out_signal_counter		: natural range 0 to 1000000;
 	
-	signal 	assm_rx_is_active 								: std_logic;
-	signal 	assm_rx_is_active_edge							: std_logic_vector(1 downto 0);	
-	signal 	assm_rx_is_active_debug_out						: std_logic;	
-	signal 	assm_rx_is_active_debug_out_signal_counter		: integer range 1000000 downto 0;
+	signal assm_rx_is_active 								: std_logic;
+	signal assm_rx_is_active_edge							: std_logic_vector(1 downto 0);	
+	signal assm_rx_is_active_debug_out						: std_logic;	
+	signal assm_rx_is_active_debug_out_signal_counter		: natural range 0 to 1000000;
 
 
 

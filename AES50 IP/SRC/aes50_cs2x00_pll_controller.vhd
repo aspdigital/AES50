@@ -32,7 +32,7 @@ use ieee.numeric_std.all;
 entity aes50_cs2x00_pll_controller is
     Port ( 	clk_i 					: in  std_logic;
 			rst_i 					: in  std_logic;
-			pll_mult_value_i		: in  integer;
+			pll_mult_value_i		: in  natural;
 			cs2x00_init_busy_o		: out std_logic;
 			sda_i      				: in  std_logic;                    
 			scl_i      				: in  std_logic;
@@ -50,13 +50,13 @@ architecture rtl of aes50_cs2x00_pll_controller is
 	signal dataOut : std_logic_vector(7 downto 0);
 	signal address : std_logic_vector(6 downto 0);
 
-	signal ResetWaitCounter : integer range 16383 downto 0:= 16383;
+	signal ResetWaitCounter : natural range 0 to 16383:= 16383;
 
-	signal i2c_state : integer range 31 downto 0 := 0;
-	signal cs2000counter: integer range 15 downto 0 := 0;
+	signal i2c_state : natural range 0 to 31 := 0;
+	signal cs2000counter: natural range 0 to 15 := 0;
 
 	signal pll_mult : std_logic_vector (31 downto 0) := (others=>'0');
-	signal pll_mult_old : integer := 0;
+	signal pll_mult_old : natural := 0;
 	
 
 
@@ -128,97 +128,103 @@ begin
 		
 	
 		if rst_i = '1' or pll_mult_old /= pll_mult_value_i then
-			ResetWaitCounter <= 16383;
-			i2c_state <= 0;
-			cs2000counter <= 0;
+			ResetWaitCounter 	<= 16383;
+			i2c_state 			<= 0;
+			cs2000counter 		<= 0;
 			
-			pll_mult_old <= pll_mult_value_i;					
-			pll_mult <= std_logic_vector(to_unsigned(pll_mult_value_i,32));
+			pll_mult_old 		<= pll_mult_value_i;					
+			pll_mult 			<= std_logic_vector(to_unsigned(pll_mult_value_i,32));
                  		
-			cs2x00_init_busy_o <= '1';
+			cs2x00_init_busy_o 	<= '1';
 			
 		else
 			
 			--reset the i2c-master controller	
-			if i2c_state = 0 then
 			
-				if ResetWaitCounter > 0 then
-					ResetWaitCounter<=ResetWaitCounter-1;
-					reset<='0';
-					enable<='0';
-				else
-					reset<='1';					
-					readwrite<='0';
-					i2c_state <= 1;
-				end if;
+			case i2c_state is	
+				when 0 =>
 				
-			--process the pll controller
-
-			--set enable and write i2c-address and first byte (basically cs2000 internal adress defined in par_lut table)
-			elsif i2c_state = 1 then			
-				enable<='1';
-				address<= "1001110";
-				dataOut <= par_lut(cs2000counter,0);
-				
-				i2c_state <= 2;	
-				
-			--wait for sigBusy=1
-			elsif i2c_state = 2 and sigBusy = '1' then
-				i2c_state <= 3;
-				
-			--wait for sigBusy=0 to write next data -> (basically cs2000 internal data matching the internal address defined previously)
-			elsif i2c_state = 3 and sigBusy = '0' then
-
-				--if we need to send the multiplier-value which is dynamic
-				if (par_lut(cs2000counter,0) = x"06") then
-					dataOut <= pll_mult(31 downto 24);
-					
-				elsif (par_lut(cs2000counter,0) = x"07") then
-					dataOut <= pll_mult (23 downto 16);
-					
-				elsif (par_lut(cs2000counter,0) = x"08") then
-					dataOut <= pll_mult(15 downto 8);
-					
-				elsif (par_lut(cs2000counter,0) = x"09") then
-					dataOut <= pll_mult(7 downto 0);
-		
-				else
-					--otherwise, use defined data by table
-					dataOut <= par_lut(cs2000counter,1);
-				end if;
-				
-				i2c_state <= 4;		
-				
-			--wait for sigBusy=1
-			elsif i2c_state = 4 and sigBusy = '1' then				
-				i2c_state <= 5;
-				
-			--wait for sigBusy=0 and disable and set timeout to wait for next transaction
-			elsif i2c_state = 5 and sigBusy = '0' then				
-				enable <= '0';
-				ResetWaitCounter <= 16383;
-				
-				i2c_state <= 6;
-				
-			--check if timeout has passed -> if yes check if we need to send next byte to cs2000 controller or if we continue with mux-controller
-			elsif i2c_state = 6 then
-			
-				if ResetWaitCounter > 0 then
-					ResetWaitCounter <= ResetWaitCounter - 1;
-				else
-				
-					if (cs2000counter < 11) then
-						cs2000counter <= cs2000counter +1;
+					if ResetWaitCounter > 0 then
+						ResetWaitCounter<=ResetWaitCounter-1;
+						reset<='0';
+						enable<='0';
+					else
+						reset<='1';					
+						readwrite<='0';
 						i2c_state <= 1;
+					end if;
+					
+				--process the pll controller
+
+				--set enable and write i2c-address and first byte (basically cs2000 internal adress defined in par_lut table)
+				when 1 =>			
+					enable<='1';
+					address<= "1001110";
+					dataOut <= par_lut(cs2000counter,0);
+					
+					i2c_state <= 2;	
+					
+				--wait for sigBusy=1
+				when 2 =>			
+					if (sigBusy = '1') then
+						i2c_state <= 3;
+					end if;
+					
+				--wait for sigBusy=0 to write next data -> (basically cs2000 internal data matching the internal address defined previously)
+				when 3 =>
+
+					if (sigBusy = '0') then
+					
+						case par_lut(cs2000counter, 0) is
+							when x"06"  => dataOut <= pll_mult(31 downto 24);
+							when x"07"  => dataOut <= pll_mult(23 downto 16);
+							when x"08"  => dataOut <= pll_mult(15 downto 8);
+							when x"09"  => dataOut <= pll_mult(7 downto 0);
+							when others => dataOut <= par_lut(cs2000counter, 1);
+						end case;
+												
+						i2c_state <= 4;	
+					end if;
+					--if we need to send the multiplier-value which is dynamic
+						
+					
+				--wait for sigBusy=1
+				when 4 =>
+					if (sigBusy = '1') then
+						i2c_state <= 5;
+					end if;
+					
+				--wait for sigBusy=0 and disable and set timeout to wait for next transaction	
+				when 5 =>
+					if (sigBusy = '0') then
+						enable <= '0';
+						ResetWaitCounter <= 16383;
+						i2c_state <= 6;
+					end if;
+				
+							
+					
+					
+				--check if timeout has passed -> if yes check if we need to send next byte to cs2000 controller or if we continue with mux-controller
+				when 6 =>
+				
+					if ResetWaitCounter > 0 then
+						ResetWaitCounter <= ResetWaitCounter - 1;
 					else
 					
-						i2c_state <= 7;
-						cs2x00_init_busy_o <= '0';
-					end if;
-				end if;				
+						if (cs2000counter < 11) then
+							cs2000counter <= cs2000counter +1;
+							i2c_state <= 1;
+						else
+						
+							i2c_state <= 7;
+							cs2x00_init_busy_o <= '0';
+						end if;
+					end if;				
 
-			
-			end if;
+				
+				when others => null;
+			end case;
 		end if;
 	end if;
 end process;

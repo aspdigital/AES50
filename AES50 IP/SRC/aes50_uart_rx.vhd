@@ -23,7 +23,7 @@ entity aes50_uart_rx is
   port (
     i_Clk       		: in  std_logic;
     i_RX_Serial 		: in  std_logic;
-	i_CLKS_PER_BIT 		: in integer;
+	i_CLKS_PER_BIT 		: in natural;
     o_RX_DV     		: out std_logic;
     o_RX_Byte   		: out std_logic_vector(7 downto 0)
     );
@@ -39,8 +39,8 @@ architecture rtl of aes50_uart_rx is
   signal r_RX_Data_R : std_logic := '0';
   signal r_RX_Data   : std_logic := '0';
    
-  signal r_Clk_Count : integer := 0;
-  signal r_Bit_Index : integer range 0 to 7 := 0;  -- 8 Bits Total
+  signal r_Clk_Count : natural := 0;
+  signal r_Bit_Index : natural range 0 to 7 := 0;  -- 8 Bits Total
   signal r_RX_Byte   : std_logic_vector(7 downto 0) := (others => '0');
   signal r_RX_DV     : std_logic := '0';
    

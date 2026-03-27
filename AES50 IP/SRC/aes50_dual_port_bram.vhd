@@ -30,8 +30,8 @@ entity aes50_dual_port_bram is
 		enb_i 				: in std_logic;
 		wea_i 				: in std_logic;
 		web_i 				: in std_logic;
-		addra_i 			: in integer range RAM_DEPTH - 1 downto 0;
-		addrb_i 			: in integer range RAM_DEPTH - 1 downto 0;
+		addra_i 			: in natural range 0 to RAM_DEPTH - 1;
+		addrb_i 			: in natural range 0 to RAM_DEPTH - 1;
 		da_i 				: in std_logic_vector(RAM_WIDTH - 1 downto 0);
 		db_i 				: in std_logic_vector(RAM_WIDTH - 1 downto 0);
 		da_o 				: out std_logic_vector(RAM_WIDTH - 1 downto 0);

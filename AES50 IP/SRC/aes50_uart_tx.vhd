@@ -25,7 +25,7 @@ entity aes50_uart_tx is
     i_Clk       		: in  std_logic;
     i_TX_DV     		: in  std_logic;
     i_TX_Byte   		: in  std_logic_vector(7 downto 0);
-	i_CLKS_PER_BIT 		: in integer;     
+	i_CLKS_PER_BIT 		: in natural;     
     o_TX_Active 		: out std_logic;
     o_TX_Serial 		: out std_logic;
     o_TX_Done   		: out std_logic
@@ -39,8 +39,8 @@ architecture rtl of aes50_uart_tx is
                      s_TX_Stop_Bit, s_Cleanup);
   signal r_SM_Main : t_SM_Main := s_Idle;
  
-  signal r_Clk_Count : integer := 0;
-  signal r_Bit_Index : integer range 0 to 7 := 0;  -- 8 Bits Total
+  signal r_Clk_Count : natural := 0;
+  signal r_Bit_Index : natural range 0 to 7 := 0;  -- 8 Bits Total
   signal r_TX_Data   : std_logic_vector(7 downto 0) := (others => '0');
   signal r_TX_Done   : std_logic := '0';
    

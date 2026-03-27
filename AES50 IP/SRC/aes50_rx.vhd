@@ -57,9 +57,9 @@ entity aes50_rx is
 			aux0_out_rd_en_i			: in std_logic;
 			aux1_out_rd_en_i			: in std_logic;
 			
-			fifo_fill_count_audio_o 	: out integer range 1056 - 1 downto 0;
-			fifo_fill_count_aux0_o 		: out integer range 176 - 1 downto 0;
-			fifo_fill_count_aux1_o 		: out integer range 176 - 1 downto 0;	
+			fifo_fill_count_audio_o 	: out natural range 0 to 1056 - 1;
+			fifo_fill_count_aux0_o 		: out natural range 0 to 176 - 1;
+			fifo_fill_count_aux1_o 		: out natural range 0 to 176 - 1;	
 			
 			eth_rx_data_i         		: in std_logic_vector(7 downto 0);
 			eth_rx_sof_i          		: in std_logic;
@@ -76,95 +76,104 @@ end aes50_rx;
 
 architecture rtl of aes50_rx is
 	
+	function lc_ram_addr(pingpong  : natural; enc_block : natural; subframe  : natural) return natural is
+    begin
+        return pingpong * 704 + enc_block * 22 + subframe;
+    end function;
+	
+	
 	--FIFO Interconnects
 	
 	--audio fifo
-	signal	audio_fifo_in		: std_logic_vector (24 downto 0);
-	signal 	audio_fifo_in_wr_en	: std_logic;
-	signal  audio_fifo_out		: std_logic_vector(24 downto 0);
+	signal	audio_fifo_in					: std_logic_vector (24 downto 0);
+	signal 	audio_fifo_in_wr_en				: std_logic;
+	signal  audio_fifo_out					: std_logic_vector(24 downto 0);
 	
 	--aux fifo
-	signal 	aux_fifo_in			: std_logic_vector (16 downto 0);	
-	signal 	aux_fifo_in_wr_en	: std_logic;
-	signal 	aux0_fifo_out		: std_logic_vector(16 downto 0);
-	signal 	aux1_fifo_out		: std_logic_vector(16 downto 0);
+	signal 	aux_fifo_in						: std_logic_vector (16 downto 0);	
+	signal 	aux_fifo_in_wr_en				: std_logic;
+	signal 	aux0_fifo_out					: std_logic_vector(16 downto 0);
+	signal 	aux1_fifo_out					: std_logic_vector(16 downto 0);
 	
 	--RAM signals
 	
 	--port A (50 MHz P1 side)
-	signal 	lc_ram_di_a			: std_logic_vector (31 downto 0);
-	signal 	lc_ram_a_addr		: integer range 1408 - 1 downto 0;	-- 2x pingpong * 32x encoded-blocks * 22x subframes 
-	signal 	lc_ram_di_a_we		: std_logic;
+	signal 	lc_ram_di_a						: std_logic_vector (31 downto 0);
+	signal 	lc_ram_a_addr					: natural range 0 to 1408-1;
+	signal 	lc_ram_di_a_we					: std_logic;
 	
 	
 	--port B (100 MHz P2 side)
-	signal 	lc_ram_di_b			: std_logic_vector (31 downto 0);
-	signal  lc_ram_b_addr		: integer range 1408 - 1 downto 0;
-	signal 	lc_ram_di_b_we		: std_logic;
-	signal 	lc_ram_do_b			: std_logic_vector (31 downto 0);
+	signal 	lc_ram_di_b						: std_logic_vector (31 downto 0);
+	signal  lc_ram_b_addr					: natural range 0 to 1408-1;
+	signal 	lc_ram_di_b_we					: std_logic;
+	signal 	lc_ram_do_b						: std_logic_vector (31 downto 0);
 	
 	
 	
 	--P1 (Process 1) variables
 	
-	signal reset50M_z, reset50M_zz	: std_logic;
+	signal reset50M_z						: std_logic;
+	signal reset50M_zz						: std_logic;
 	
 	type t_State_p1 is (WaitData, HeaderOrData, WaitFifoProcessHandshake);
-    signal P1_State : t_State_p1;
-	signal lc_pingpong			: integer range 1 downto 0;
+    signal P1_State 						: t_State_p1;
+	signal lc_pingpong						: natural range 0 to 1;
 	
 	--edge detectors
-	signal eth_rx_dv_edge		: std_logic_vector (1 downto 0);
+	signal eth_rx_dv_edge					: std_logic_vector (1 downto 0);
 	
 	--Counter variables
-	signal lc_counter			: integer range 31	downto 0;	
-	signal lc_subframe_counter	: integer range 31 downto 0;
-	signal rx_byte_counter		: integer range 1500 downto 0;
-	signal rx_round_44k1		: integer range 1 downto 0;
+	signal lc_counter						: natural range 0 to 31;
+	signal lc_subframe_counter				: natural range 0 to 31;
+	signal rx_byte_counter					: natural range 0 to 1500;
+	signal rx_round_44k1					: natural range 0 to 1;
 	
 	--Temp variables
-	signal tmp_rx_word			: std_logic_vector (31 downto 0);
-	signal tmp_rx_byte_counter	: integer range 3 downto 0;
-	signal found_assm_sync			: std_logic;
+	signal tmp_rx_word						: std_logic_vector (31 downto 0);
+	signal tmp_rx_byte_counter				: natural range 0 to 3;
+	signal found_assm_sync					: std_logic;
 	
 	--handshake signals
-	signal ram_to_fifo_start_50M	: std_logic;
-	signal ram_to_fifo_ack_50M_z, ram_to_fifo_ack_50M_zz : std_logic;
+	signal ram_to_fifo_start_50M			: std_logic;
+	signal ram_to_fifo_ack_50M_z			: std_logic;
+	signal ram_to_fifo_ack_50M_zz 			: std_logic;
 	
-	
-	
-	
+
 	
 	--P2 (Process 2) variables
 
 	type t_State_p2 is (WaitData, RamReorder, AudioToFifo, AuxToFifo);
     signal P2_State : t_State_p2;
-	signal P2_SubState			: integer range 31 downto 0;
+	signal P2_SubState						: natural range 0 to 31;
 	
-	signal lc_fifo_pingpong		: integer range 1 downto 0;
+	signal lc_pingpong_50M         			: std_logic;   
+    signal lc_pingpong_100M_z      			: std_logic;   
+    signal lc_pingpong_100M_zz     			: std_logic;
 	
 	--Counter variables
-	signal lc2_counter			: integer range 31 downto 0;
-	signal lc2_subframe_counter	: integer range 31 downto 0;
-	signal encoded_block_no		: integer range 31 downto 0;
-	signal tmp_offset_select	: integer range 24 downto 0;
+	signal lc2_counter						: natural range 0 to 31; 
+	signal lc2_subframe_counter				: natural range 0 to 31; 
+	signal encoded_block_no					: natural range 0 to 31; 
+	signal tmp_offset_select				: natural range 0 to 24;
 	
 	--Temp Variables
-	signal reshift_tmp_a		: std_logic_vector(31 downto 0);
-	signal reshift_tmp_b		: std_logic_vector(31 downto 0);
+	signal reshift_tmp_a					: std_logic_vector(31 downto 0);
+	signal reshift_tmp_b					: std_logic_vector(31 downto 0);
 
 	--handshake signals
-	signal ram_to_fifo_start_100M_z, ram_to_fifo_start_100M_zz	: std_logic;
-	signal ram_to_fifo_ack_100M		: std_logic;
-	signal ram_to_fifo_ack_cnt	: integer range 3 downto 0;
+	signal ram_to_fifo_start_100M_z			: std_logic; 
+	signal ram_to_fifo_start_100M_zz		: std_logic;
+	signal ram_to_fifo_ack_100M				: std_logic;
+	signal ram_to_fifo_ack_cnt				: natural range 0 to 3;
 	
 
-	signal tmp_sample_a			: std_logic_vector(23 downto 0);
-	signal tmp_sample_b			: std_logic_vector(23 downto 0);
-	signal tmp_aux_lc24			: std_logic_vector(31 downto 0);
-	signal tmp_aux_lc25			: std_logic_vector(31 downto 0);
-	signal tmp_aux_vector		: std_logic_vector(63 downto 0);
-	signal tmp_slice_vector		: std_logic_vector (63 downto 0);
+	signal tmp_sample_a						: std_logic_vector(23 downto 0);
+	signal tmp_sample_b						: std_logic_vector(23 downto 0);
+	signal tmp_aux_lc24						: std_logic_vector(31 downto 0);
+	signal tmp_aux_lc25						: std_logic_vector(31 downto 0);
+	signal tmp_aux_vector					: std_logic_vector(63 downto 0);
+	signal tmp_slice_vector					: std_logic_vector (63 downto 0);
 	
 	
 	
@@ -172,12 +181,13 @@ architecture rtl of aes50_rx is
 begin
 
 
-	audio_o <= audio_fifo_out(24 downto 1);
-	audio_ch0_marker_o <= audio_fifo_out(0);
+	audio_o 			<= audio_fifo_out(24 downto 1);
+	audio_ch0_marker_o 	<= audio_fifo_out(0);
 	
-	aux0_o <= aux0_fifo_out(16 downto 1);
+	aux0_o 				<= aux0_fifo_out(16 downto 1);
 	aux0_start_marker_o <= aux0_fifo_out(0);
-	aux1_o <= aux1_fifo_out(16 downto 1);
+	
+	aux1_o 				<= aux1_fifo_out(16 downto 1);
 	aux1_start_marker_o <= aux1_fifo_out(0);
 
 		
@@ -211,209 +221,209 @@ begin
 				tmp_sample_b(23 - i) <= tmp_slice_vector(2*i + 1);
 			end loop;
 
-			for i in 13 to 23 loop
-				tmp_sample_a(23 - i) <= tmp_slice_vector(2*i + offset);
-				tmp_sample_b(23 - i) <= tmp_slice_vector(2*i + 1 + offset);
-			end loop;
-		end if;
-	end process;
-
-	process (clk100_core_i)
-	begin
-		if (rising_edge(clk100_core_i)) then
-			if (lc2_counter>=0 and lc2_counter<= 14) then
-				encoded_block_no <= lc2_counter;
-			elsif (lc2_counter>=15 and lc2_counter <= 21) then
-				encoded_block_no <= lc2_counter+1;
-			elsif (lc2_counter>=22 and lc2_counter<= 24) then
-				encoded_block_no <= lc2_counter+2;
-			elsif (lc2_counter=25) then
-				encoded_block_no <= lc2_counter+3;
+			if fs_mode_i = "00" then				
+				tmp_sample_a(10) <= tmp_slice_vector(26);  
+				tmp_sample_b(10) <= tmp_slice_vector(32);  
+				for i in 14 to 23 loop
+					tmp_sample_a(23 - i) <= tmp_slice_vector(2*i + offset);
+					tmp_sample_b(23 - i) <= tmp_slice_vector(2*i + 1 + offset);
+				end loop;
 			else
-				encoded_block_no <= 0;
+            
+				for i in 13 to 23 loop
+					tmp_sample_a(23 - i) <= tmp_slice_vector(2*i + offset);
+					tmp_sample_b(23 - i) <= tmp_slice_vector(2*i + 1 + offset);
+				end loop;
 			end if;
 		end if;
 	end process;
 
+    process(clk100_core_i)
+    begin
+        if rising_edge(clk100_core_i) then
+            case lc2_counter is
+                when 0  to 14 => encoded_block_no <= lc2_counter;
+                when 15 to 21 => encoded_block_no <= lc2_counter + 1;
+                when 22 to 24 => encoded_block_no <= lc2_counter + 2;
+                when 25       => encoded_block_no <= lc2_counter + 3;
+                when others   => encoded_block_no <= 0;
+            end case;
+        end if;
+    end process;
 
 	process(clk50_ethernet_i)
 	begin
 		if rising_edge(clk50_ethernet_i) then
 		
 			--resync signals from 100M->50M clock where necessary
-			reset50M_z <= rst_i;
+			reset50M_z 	<= rst_i;
 			reset50M_zz <= reset50M_z;		
-			ram_to_fifo_ack_50M_z <= ram_to_fifo_ack_100M;
-			ram_to_fifo_ack_50M_zz <= ram_to_fifo_ack_50M_z;
+			
+			ram_to_fifo_ack_50M_z 	<= ram_to_fifo_ack_100M;
+			ram_to_fifo_ack_50M_zz 	<= ram_to_fifo_ack_50M_z;
 			
 			
 			eth_rx_dv_edge <= eth_rx_dv_edge(0) & eth_rx_dv_i;
 			
+			-- write-enable inactive unless explicitly asserted below
+            lc_ram_di_a_we 	<= '0';
+			assm_detect_o   <= '0';
+			
 			if reset50M_zz = '1' or eth_rx_dv_edge = "01" then
 				
-				assm_detect_o <= '0';
-							
-				lc_ram_di_a <= (others=>'0');
-				lc_ram_a_addr <= 0;
-				lc_ram_di_a_we <= '0';
-							
-				lc_counter	<= 0;
-				lc_subframe_counter	<= 0;
-				
+                assm_detect_o       		<= '0';
+                lc_ram_di_a         		<= (others => '0');
+                lc_ram_a_addr       		<= 0;
+                lc_counter          		<= 0;
+                lc_subframe_counter 		<= 0;
 				-- let's start with 8 in here, because the official spec counts the data-offsets starting from preamble... However our ethernet controller starts giving us data when preamble and SFD have finished
-				rx_byte_counter <= 8; 
-				
-				tmp_rx_word <= (others=>'0');
-				tmp_rx_byte_counter <= 0;
-				
-				ram_to_fifo_start_50M <= '0';
+				rx_byte_counter 			<= 8; 
+                tmp_rx_word         		<= (others => '0');
+                tmp_rx_byte_counter 		<= 0;
+                ram_to_fifo_start_50M 		<= '0';
 				
 				--only when reset
 				if reset50M_zz = '1'then
-					P1_State <= WaitData;
-					lc_pingpong <= 0; 
-					lc_fifo_pingpong <= 0;
-					fs_mode_detect_o <= (others=>'0');
-					fs_mode_detect_valid_o <= '0';
-					
-					found_assm_sync <= '0';
-					rx_round_44k1 <= 0;
-				
-				elsif (eth_rx_dv_edge = "01") then
-					P1_State <= HeaderOrData;
+                    P1_State                <= WaitData;
+                    lc_pingpong             <= 0;
+                    lc_pingpong_50M    		<= '0';
+                    fs_mode_detect_o        <= (others => '0');
+                    fs_mode_detect_valid_o  <= '0';
+                    found_assm_sync         <= '0';
+                    rx_round_44k1           <= 0;				
+				else
+					P1_State 				<= HeaderOrData;
 				end if;
 				
 			else
 			
 				--Receive process everytime a new byte arrived from Ethernet....
-				if (P1_State = HeaderOrData) then
-					if eth_rx_valid_i = '1' then
-					
-						--Header part
-						if (rx_byte_counter >= 8 and rx_byte_counter <= 19) then
-							-- dest & src mac address -> we don't need this information
+				case P1_State is
+					when WaitData => 
+						null; -- wait for dv rising edge (handled above)
 						
-						elsif (rx_byte_counter >= 20 and rx_byte_counter <= 21) then
-							-- ether type ... we also don't care
-							
-						elsif (rx_byte_counter = 22) then	
-							-- protocol identifier ... don't care at the moment
-							
-						elsif (rx_byte_counter = 23) then
-							-- user octet ... don't care at the moment.. 
-							-- at least from protocol sniffing with wire-shark it seems it is used for something as the logging showed varying information on this byte.. 
-							-- However there's no specific meaning just from the spec itself
-							
-						elsif (rx_byte_counter >= 24 and rx_byte_counter <= 29) then	
+					when HeaderOrData =>
+						if eth_rx_valid_i = '1' then
 						
-							--check for ASSM flag
-							if (rx_byte_counter = 25 and eth_rx_data_i = x"11") then
-								assm_detect_o <= '1';
-								found_assm_sync <= '1';
-								rx_round_44k1 <= 0;
-							else
-								assm_detect_o <= '0';
-							end if;
+							case rx_byte_counter is
+								--Header part
+								when 8 to 21 =>	
+									-- dest & src mac address / ethertype  -> we don't need this information
+									null;
 							
-							if (rx_byte_counter = 26 and eth_rx_data_i = x"46") then
-								fs_mode_detect_o <= "01"; --48k detected
-								fs_mode_detect_valid_o <= '1';
-							elsif (rx_byte_counter = 26 and eth_rx_data_i = x"06") then
-								fs_mode_detect_o <= "00"; --44k1 detected
-								fs_mode_detect_valid_o <= '1';
-							end if;
+								when 22 to 23 =>
+									-- protocol ID & user octet ... don't care at the moment.. 
+									-- at least from protocol sniffing with wire-shark it seems it is used for something as the logging showed varying information on this byte.. 
+									-- However there's no specific meaning just from the spec itself
+									null;							
 							
-							if (rx_byte_counter = 29) then
-								P1_State <= HeaderOrData;
-							end if;
-						
-
-						--Data part
-						elsif (rx_byte_counter >= 30 and rx_byte_counter <= 1437) then
-							-- actual data coming
-							if (tmp_rx_byte_counter = 0) then
-								tmp_rx_word <= tmp_rx_word(31 downto 8) & eth_rx_data_i;
-								tmp_rx_byte_counter <= 1;
+								when 25  =>
 								
-							elsif (tmp_rx_byte_counter = 1) then
-								tmp_rx_word <= tmp_rx_word (31 downto 16) & eth_rx_data_i & tmp_rx_word(7 downto 0);
-								tmp_rx_byte_counter <= 2;
+									--check for ASSM flag									
+									if eth_rx_data_i = x"11" then
+										assm_detect_o   <= '1';
+										found_assm_sync <= '1';
+										rx_round_44k1   <= 0;
+									end if;
 								
-							elsif (tmp_rx_byte_counter = 2) then
-								tmp_rx_word <= tmp_rx_word (31 downto 24) & eth_rx_data_i & tmp_rx_word(15 downto 0);
-								tmp_rx_byte_counter <= 3;
 								
-							else 
-								lc_ram_di_a <=  eth_rx_data_i & tmp_rx_word(23 downto 0);
-								lc_ram_di_a_we <= '1';
-								
-								if (fs_mode_i = "00" and rx_round_44k1 = 1) then
-									--lc_ram_a_addr <= lc_pingpong*704 + lc_counter*22 + lc_subframe_counter + 11;
-									lc_ram_a_addr <= to_integer((to_unsigned(lc_pingpong, 11) sll 9) + (to_unsigned(lc_pingpong, 11) sll 7) + (to_unsigned(lc_pingpong, 11) sll 6) + (to_unsigned(lc_counter, 11) sll 4) + (to_unsigned(lc_counter, 11) sll 2) + (to_unsigned(lc_counter, 11) sll 1) + to_unsigned(lc_subframe_counter, 11)) + 11;
-								else
-									--lc_ram_a_addr <= lc_pingpong*704 + lc_counter*22 + lc_subframe_counter;
-									lc_ram_a_addr <= to_integer((to_unsigned(lc_pingpong, 11) sll 9) + (to_unsigned(lc_pingpong, 11) sll 7) + (to_unsigned(lc_pingpong, 11) sll 6) + (to_unsigned(lc_counter, 11) sll 4) + (to_unsigned(lc_counter, 11) sll 2) + (to_unsigned(lc_counter, 11) sll 1) + to_unsigned(lc_subframe_counter, 11));
-								end if;
-								
-								if (lc_counter < 31) then
-										lc_counter <= lc_counter + 1;
-										
-								else
+								when 26  =>
+									case eth_rx_data_i is
+										when x"46" =>
+											fs_mode_detect_o       <= "01";  -- 48 kHz
+											fs_mode_detect_valid_o <= '1';
+										when x"06" =>
+											fs_mode_detect_o       <= "00";  -- 44.1 kHz
+											fs_mode_detect_valid_o <= '1';
+										when others =>
+											null;
+									end case;
 									
-									if lc_subframe_counter < 10 then					
-										lc_subframe_counter <= lc_subframe_counter + 1;
-										lc_counter <= 0;									
-																	
-									else							
-										lc_subframe_counter <= 0;							
-										lc_counter <= 0;
-													
-										-- this is the finish condition....
-										if ( (fs_mode_i = "01" or (fs_mode_i = "00" and rx_round_44k1=1)) and found_assm_sync = '1') then
-																		
-											P1_State <= WaitFifoProcessHandshake;
-											rx_round_44k1 <= 0;
+
+
+							--Data part
+								when 30 to 1437 =>
+									-- actual data coming
+									case tmp_rx_byte_counter is
+									
+										when 0 =>
+											tmp_rx_word <= tmp_rx_word(31 downto 8) & eth_rx_data_i;
+											tmp_rx_byte_counter <= 1;
 											
-											lc_fifo_pingpong <= lc_pingpong;
-											ram_to_fifo_start_50M <= '1';
-											if (lc_pingpong = 0) then
-												lc_pingpong <= 1;
+										when 1 =>
+											tmp_rx_word <= tmp_rx_word (31 downto 16) & eth_rx_data_i & tmp_rx_word(7 downto 0);
+											tmp_rx_byte_counter <= 2;
+											
+										when 2 =>
+											tmp_rx_word <= tmp_rx_word (31 downto 24) & eth_rx_data_i & tmp_rx_word(15 downto 0);
+											tmp_rx_byte_counter <= 3;
+											
+										when others =>  -- 3: word complete 
+											lc_ram_di_a <=  eth_rx_data_i & tmp_rx_word(23 downto 0);
+											lc_ram_di_a_we <= '1';
+											
+											if fs_mode_i = "00" and rx_round_44k1 = 1 then
+												lc_ram_a_addr <= lc_ram_addr(lc_pingpong, lc_counter, lc_subframe_counter) + 11;
 											else
-												lc_pingpong <= 0;
+												lc_ram_a_addr <= lc_ram_addr(lc_pingpong, lc_counter, lc_subframe_counter);
 											end if;
 											
-										elsif (fs_mode_i = "00" and rx_round_44k1 = 0 and found_assm_sync = '1') then
-											P1_State <= WaitData;
-											rx_round_44k1 <= 1;
-										end if;
-										
-										
+											if (lc_counter < 31) then
+												lc_counter <= lc_counter + 1;
+													
+											else
+												
+												if lc_subframe_counter < 10 then					
+													lc_subframe_counter <= lc_subframe_counter + 1;
+													lc_counter <= 0;									
+																				
+												else							
+													lc_subframe_counter <= 0;							
+													lc_counter <= 0;
+																
+													-- this is the finish condition....
+													if ( (fs_mode_i = "01" or (fs_mode_i = "00" and rx_round_44k1=1)) and found_assm_sync = '1') then
+																					
+														P1_State 			<= WaitFifoProcessHandshake;
+														rx_round_44k1 		<= 0;
+														
+														
+														ram_to_fifo_start_50M <= '1';
+														
+														if (lc_pingpong = 0) then
+															lc_pingpong_50M <= '0';
+															lc_pingpong <= 1;
+														else
+															lc_pingpong_50M <= '1';
+															lc_pingpong <= 0;
+														end if;
+														
+													elsif (fs_mode_i = "00" and rx_round_44k1 = 0 and found_assm_sync = '1') then
+														P1_State <= WaitData;
+														rx_round_44k1 <= 1;
+													end if;										
+														
+												end if;
+											end if;
 											
-									end if;
-								end if;
-								
-								tmp_rx_byte_counter <= 0;
+											tmp_rx_byte_counter <= 0;									
+									end case; 
 									
-							end if;
-							
+								when others =>  null;
+							end case;  -- rx_byte_counter
+							rx_byte_counter <= rx_byte_counter + 1;
 						end if;
-						rx_byte_counter <= rx_byte_counter + 1;
-					end if;
+						
+									
+					when WaitFifoProcessHandshake =>
+						
+						if (ram_to_fifo_ack_50M_zz = '1') then
+							ram_to_fifo_start_50M 	<= '0';
+							P1_State 				<= WaitData;
+						end if;
 					
-				elsif P1_State = HeaderOrData then
-					if lc_ram_di_a_we = '1' then			
-						-- reset ram write
-						lc_ram_di_a_we <= '0';
-					end if;
-					
-				
-				elsif P1_State = WaitFifoProcessHandshake then
-					lc_ram_di_a_we <= '0';
-					if (ram_to_fifo_ack_50M_zz = '1') then
-						ram_to_fifo_start_50M <= '0';
-						P1_State <= WaitData;
-					end if;
-				end if;	
+					when others => null;
+				end case;  -- P1_State
 			
 			end if;
 		end if;
@@ -427,365 +437,342 @@ begin
 		if rising_edge(clk100_core_i) then
 		
 			--resync signals from 50M->100M clock where necessary
-			ram_to_fifo_start_100M_z <= ram_to_fifo_start_50M;
-			ram_to_fifo_start_100M_zz <= ram_to_fifo_start_100M_z;
+			ram_to_fifo_start_100M_z 	<= ram_to_fifo_start_50M;
+			ram_to_fifo_start_100M_zz 	<= ram_to_fifo_start_100M_z;
 			
+			lc_pingpong_100M_z    		<= lc_pingpong_50M;
+            lc_pingpong_100M_zz   		<= lc_pingpong_100M_z;
+			
+			lc_ram_di_b_we    			<= '0';
+            audio_fifo_in_wr_en 		<= '0';
+            aux_fifo_in_wr_en   		<= '0';
+
+
 			if rst_i = '1' then
 			
-				P2_State <= WaitData;
-				P2_SubState <= 0;
-				
-				
-				lc_ram_di_b	<= (others => '0');
-				lc_ram_di_b_we <= '0';
-				lc_ram_b_addr <= 0;
-				
-				lc2_counter <= 0;
-				lc2_subframe_counter <= 0;
-				tmp_offset_select <= 0;
-				
-				tmp_slice_vector <= (others=> '0');
-				
-				
-				reshift_tmp_a <= (others=> '0');
-				reshift_tmp_b <= (others=> '0');
-				
-				tmp_aux_lc24 <= (others=>'0');
-				tmp_aux_lc25 <= (others=>'0');
-				
-				ram_to_fifo_ack_100M <= '0';
-				ram_to_fifo_ack_cnt <= 0;
+                P2_State             <= WaitData;
+                P2_SubState          <= 0;
+                lc_ram_di_b          <= (others => '0');
+                lc_ram_b_addr        <= 0;
+                lc2_counter          <= 0;
+                lc2_subframe_counter <= 0;
+                tmp_offset_select    <= 0;
+                tmp_slice_vector     <= (others => '0');
+                reshift_tmp_a        <= (others => '0');
+                reshift_tmp_b        <= (others => '0');
+                tmp_aux_lc24         <= (others => '0');
+                tmp_aux_lc25         <= (others => '0');
+                ram_to_fifo_ack_100M <= '0';
+                ram_to_fifo_ack_cnt  <= 0;
 				
 			else
 			
 				--Let's wait for the signal coming from process 1
-				if P2_State = WaitData then
-					if P2_SubState = 0 then
-						if ram_to_fifo_start_100M_zz = '1' and ram_to_fifo_ack_cnt = 0 then
-							--we need to wait a bit, because this process runs faster then P1, therefore we wait 4 cycles to indicate the acknowledge
-							ram_to_fifo_ack_100M <= '1';
-							ram_to_fifo_ack_cnt  <= 3;
+				case P2_State is
 				
-							P2_SubState <= 1;
-						end if;
-					
-					--let's signal the acknowledge and check if we need to start reorder process or not depending on sample-rate
-					elsif P2_SubState = 1 then
-						ram_to_fifo_ack_cnt <= ram_to_fifo_ack_cnt - 1;
-						
-						if (ram_to_fifo_ack_cnt = 1) then
-						
-							ram_to_fifo_ack_100M <= '0';
+					when WaitData =>
+						case P2_SubState is
+							when 0 =>
+								if ram_to_fifo_start_100M_zz = '1' and ram_to_fifo_ack_cnt = 0 then
+									--we need to wait a bit, because this process runs faster then P1, therefore we wait 4 cycles to indicate the acknowledge
+									ram_to_fifo_ack_100M <= '1';
+									ram_to_fifo_ack_cnt  <= 3;					
+									P2_SubState <= 1;
+								end if;
 							
-							if (fs_mode_i = "01") then
-								P2_State <= RamReorder;
-								P2_SubState <= 0;
-							elsif (fs_mode_i = "00") then
+							--let's signal the acknowledge and check if we need to start reorder process or not depending on sample-rate
+							when 1 =>
+								ram_to_fifo_ack_cnt <= ram_to_fifo_ack_cnt - 1;	
+								
+								if (ram_to_fifo_ack_cnt = 1) then							
+									ram_to_fifo_ack_100M <= '0';
+									lc2_counter <= 0;
+									lc2_subframe_counter <= 0;
+									
+									case fs_mode_i is
+										when "01"   => P2_State <= RamReorder;
+										when "00"   => P2_State <= AudioToFifo;
+										when others => null;
+									end case;
+									P2_SubState <= 0;									
+									
+								end if;
+							when others => null;
+						end case;
+					--Ram Reorder Process -> only needed for 48k mode
+					
+					--read out manually word 10	
+					when RamReorder =>
+						case P2_SubState is
+						
+							when 0 =>							
+								P2_SubState <= 1;
+								
+							when 1 =>								
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)), encoded_block_no, 10);
+								P2_SubState <= 2;
+							
+							--and read out manually word 9 and we also need to wait dummy cycle for readback of word 10			
+							when 2 =>
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)), encoded_block_no, 9);
+								P2_SubState <= 3;
+							
+							--readback of word 10
+							when 3 =>
+								reshift_tmp_a <= lc_ram_do_b; --word 10 in a
+								
+								P2_SubState <= 4;
+								
+							--readback of word 9 and save back sub-slice 11
+							when 4 =>
+								reshift_tmp_b <= lc_ram_do_b; --word 9 in b							
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)),  encoded_block_no, 11);
+								lc_ram_di_b <= "000" & reshift_tmp_a (27 downto 0) & lc_ram_do_b(31);
+								lc_ram_di_b_we <= '1';
+								
+								P2_SubState <= 5;
+								
+							--save back sub-slice 10
+							when 5 =>
+							
+								lc_ram_b_addr  <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)),encoded_block_no, 10);
+								lc_ram_di_b <= "000" & reshift_tmp_b (30 downto 2);
+								lc_ram_di_b_we <= '1';
+								
+								P2_SubState <= 6;
+							
+							--disable write-enable of RAM and set subframe-counter to 9 as we start looping now
+							when 6 =>
+								lc2_subframe_counter <= 9;							
+								P2_SubState <= 7;
+							
+							--readback subframecounter and subframecounter-1
+							when 7 =>
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)),encoded_block_no, lc2_subframe_counter);
+								
+								P2_SubState <= 8;
+								
+							when 8 =>
+								if lc2_subframe_counter > 0 then
+									lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)),encoded_block_no, lc2_subframe_counter) - 1;
+								end if;
+								
+								P2_SubState <= 9;
+							
+							--save back the two words
+							when 9 =>
+								reshift_tmp_a <= lc_ram_do_b;
+								
+								P2_SubState <= 10;
+								
+							when 10 =>
+								reshift_tmp_b <= lc_ram_do_b;			
+								
+								--timing optimization -> see original below
+								if (lc2_subframe_counter > 0) then
+									tmp_offset_select <= (9-lc2_subframe_counter)*3;
+								end if;
+								
+								P2_SubState <= 11;
+								
+							--and now reshift and write back to ram
+							when 11 =>
+								if (lc2_subframe_counter > 0) then
+									--lc_ram_di_b <= "000" & reshift_tmp_a (1 + (9-lc2_subframe_counter)*3 downto 0) & reshift_tmp_b (31 downto 5 + (9-lc2_subframe_counter)*3);
+									lc_ram_di_b <= "000" & reshift_tmp_a (1 + tmp_offset_select  downto 0) & reshift_tmp_b (31 downto 5 + tmp_offset_select);
+									
+								else
+									-- special condition 0
+									lc_ram_di_b <= "000" & reshift_tmp_a (28 downto 0);
+								end if;
+								
+								lc_ram_b_addr  <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)),encoded_block_no, lc2_subframe_counter);
+								lc_ram_di_b_we <= '1';
+								
+								--if there is still to process...
+								if (lc2_subframe_counter > 0) then
+									lc2_subframe_counter <= lc2_subframe_counter - 1;
+									P2_SubState <= 7;
+								else
+									--check if we have all channels, if now, start from beginning
+									if (lc2_counter < 23) then
+										lc2_counter <= lc2_counter + 1;
+										P2_SubState <= 0; 
+										
+									else
+										-- finished
+										P2_SubState <= 12;
+									end if;
+									
+								end if;
+								
+							when 12 =>								
+								lc2_counter <= 0;
+								lc2_subframe_counter <= 0;
+								
 								P2_State <= AudioToFifo;
 								P2_SubState <= 0;
-							end if;
-							
-							lc2_counter <= 0;
-							lc2_subframe_counter <= 0;
-							
-						end if;
-					end if;
-					
-				--Ram Reorder Process -> only needed for 48k mode
-				
-				--read out manually word 10	
-				elsif P2_State = RamReorder then
-					if P2_SubState = 0 then	
-						lc_ram_di_b_we <= '0';
-						
-						P2_SubState <= 1;
-						
-					elsif P2_SubState = 1 then		
-						
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + 10;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1)) + 10;
-						
-						P2_SubState <= 2;
-					
-					--and read out manually word 9 and we also need to wait dummy cycle for readback of word 10			
-					elsif P2_SubState = 2 then
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + 9;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1)) + 9;
-						
-						P2_SubState <= 3;
-					
-					--readback of word 10
-					elsif P2_SubState = 3 then
-						reshift_tmp_a <= lc_ram_do_b; --word 10 in a
-						
-						P2_SubState <= 4;
-						
-					--readback of word 9 and save back sub-slice 11
-					elsif P2_SubState = 4 then
-						reshift_tmp_b <= lc_ram_do_b; --word 9 in b
-						
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + 11;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1)) + 11;
-						lc_ram_di_b <= "000" & reshift_tmp_a (27 downto 0) & lc_ram_do_b(31);
-						lc_ram_di_b_we <= '1';
-						
-						P2_SubState <= 5;
-						
-					--save back sub-slice 10
-					elsif P2_SubState = 5 then
-					
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + 10;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1)) + 10;
-						lc_ram_di_b <= "000" & reshift_tmp_b (30 downto 2);
-						lc_ram_di_b_we <= '1';
-						
-						P2_SubState <= 6;
-					
-					--disable write-enable of RAM and set subframe-counter to 9 as we start looping now
-					elsif P2_SubState = 6 then
-						lc_ram_di_b_we <= '0';
-						lc2_subframe_counter <= 9;
-						
-						P2_SubState <= 7;
-					
-					--readback subframecounter and subframecounter-1
-					elsif P2_SubState = 7 then
-						lc_ram_di_b_we <= '0';
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + lc2_subframe_counter;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1) + to_unsigned(lc2_subframe_counter, 11));
-
-						
-						P2_SubState <= 8;
-						
-					elsif P2_SubState = 8 then
-						if (lc2_subframe_counter>0) then
-							--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + (lc2_subframe_counter - 1);
-							lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1) + to_unsigned(lc2_subframe_counter, 11)) - 1;
-						end if;
-						
-						P2_SubState <= 9;
-					
-					--save back the two words
-					elsif P2_SubState = 9 then
-						reshift_tmp_a <= lc_ram_do_b;
-						
-						P2_SubState <= 10;
-						
-					elsif P2_SubState = 10 then
-						reshift_tmp_b <= lc_ram_do_b;
-						
-						P2_SubState <= 11;	
-						
-						--timing optimization -> see original below
-						if (lc2_subframe_counter > 0) then
-							tmp_offset_select <= (9-lc2_subframe_counter)*3;
-						end if;
-						
-					--and now reshift and write back to ram
-					elsif P2_SubState = 11 then
-						if (lc2_subframe_counter > 0) then
-							--lc_ram_di_b <= "000" & reshift_tmp_a (1 + (9-lc2_subframe_counter)*3 downto 0) & reshift_tmp_b (31 downto 5 + (9-lc2_subframe_counter)*3);
-							lc_ram_di_b <= "000" & reshift_tmp_a (1 + tmp_offset_select  downto 0) & reshift_tmp_b (31 downto 5 + tmp_offset_select);
-							
-						else
-							-- special condition 0
-							lc_ram_di_b <= "000" & reshift_tmp_a (28 downto 0);
-						end if;
-						
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + lc2_subframe_counter;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1) + to_unsigned(lc2_subframe_counter, 11));
-						lc_ram_di_b_we <= '1';
-						
-						--if there is still to process...
-						if (lc2_subframe_counter > 0) then
-							lc2_subframe_counter <= lc2_subframe_counter - 1;
-							P2_SubState <= 7;
-						else
-							--check if we have all channels, if now, start from beginning
-							if (lc2_counter < 23) then
-								lc2_counter <= lc2_counter + 1;
-								P2_SubState <= 0; 
 								
-							else
-								-- finished
-								P2_SubState <= 12;
-							end if;
+							when others => null;
+                        end case;
+					
+					
+					--AudioToFifo Process
+					
+					--start copy audio to fifos	
+					when AudioToFifo =>
+						case P2_SubState is
+							when 0 =>
 							
-						end if;
-						
-					elsif P2_SubState = 12 then
-						lc_ram_di_b_we <= '0';
-						lc2_counter <= 0;
-						lc2_subframe_counter <= 0;
-						
-						P2_State <= AudioToFifo;
-						P2_SubState <= 0;
-						
-					end if;
-				
-				
-				--AudioToFifo Process
-				
-				--start copy audio to fifos	
-				elsif P2_State = AudioToFifo then
-					if P2_SubState = 0 then
-					
-						P2_SubState <= 1;
-						
-					elsif P2_SubState = 1 then
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + lc2_subframe_counter;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1) + to_unsigned(lc2_subframe_counter, 11));
-						
-						P2_SubState <= 2;
-						
-					elsif P2_SubState = 2 then
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + lc2_subframe_counter+1;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1) + to_unsigned(lc2_subframe_counter, 11)) + 1;
-						
-						P2_SubState <= 3;
-						
-					elsif P2_SubState = 3 then				
-						if (fs_mode_i = "01") then
-							tmp_slice_vector(28 downto 0) <= lc_ram_do_b (28 downto 0);		
-						elsif (fs_mode_i = "00") then
-							tmp_slice_vector(31 downto 0) <= lc_ram_do_b;
-						end if;
-						P2_SubState <= 4;
-					
-					elsif P2_SubState = 4 then
-						
-						if (fs_mode_i = "01") then
-							tmp_slice_vector(57 downto 29) <= lc_ram_do_b (28 downto 0);	
-						else
-							tmp_slice_vector(63 downto 32) <= lc_ram_do_b;
-						end if;
-						P2_SubState <= 5;
-						
-					elsif P2_SubState = 5 then
-						
-						--always mark the sample from ch0 with an additional '1' in the FIFO to check FIFO-stream integrity
-						if (lc2_counter = 0) then
-							audio_fifo_in <= tmp_sample_a & "1";
-						else
-							audio_fifo_in <= tmp_sample_a & "0";
-						end if;
-						
-						audio_fifo_in_wr_en <= '1';
-						
-						P2_SubState <= 6;
-						
-					elsif P2_SubState = 6 then
-						
-						audio_fifo_in <= tmp_sample_b & "0";
-						audio_fifo_in_wr_en <= '1';
-						
-						P2_SubState <= 7;			
-					
-					elsif P2_SubState = 7 then			
-						audio_fifo_in_wr_en <= '0';
-						
-						if lc2_counter < 23 then
-							lc2_counter <= lc2_counter + 1;
-							P2_SubState <= 0;					
-						else
-							lc2_counter <= 0;
+								P2_SubState <= 1;
+								
+							when 1 =>
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)),encoded_block_no, lc2_subframe_counter);
+								
+								P2_SubState <= 2;
+								
+							when 2 =>
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)), encoded_block_no, lc2_subframe_counter) + 1;
+								
+								P2_SubState <= 3;
+								
+							when 3 =>			
+								 case fs_mode_i is
+									when "01"   => tmp_slice_vector(28 downto 0)  <= lc_ram_do_b(28 downto 0);
+									when "00"   => tmp_slice_vector(31 downto 0)  <= lc_ram_do_b;
+									when others => null;
+								end case;
+								
+								P2_SubState <= 4;
 							
-							if (fs_mode_i = "01" and lc2_subframe_counter < 10) or (fs_mode_i = "00" and lc2_subframe_counter < 20) then
-								lc2_subframe_counter <= lc2_subframe_counter + 2;
-								P2_SubState <= 0;	
-													
-							else
 							
-								lc2_subframe_counter <= 0;
-								lc2_counter <= 24;
-								P2_State <= AuxToFifo;
-								P2_SubState <= 0;
-							end if;					
+							when 4 =>								
+								case fs_mode_i is
+									when "01"   => tmp_slice_vector(57 downto 29) <= lc_ram_do_b(28 downto 0);
+									when "00"   => tmp_slice_vector(63 downto 32) <= lc_ram_do_b;
+									when others => null;
+								end case;
+								
+								P2_SubState <= 5;
+								
+							when 5 =>
+								
+								--always mark the sample from ch0 with an additional '1' in the FIFO to check FIFO-stream integrity
+								if (lc2_counter = 0) then
+									audio_fifo_in <= tmp_sample_a & "1";
+								else
+									audio_fifo_in <= tmp_sample_a & "0";
+								end if;							
+								audio_fifo_in_wr_en <= '1';
+								
+								P2_SubState <= 6;
+								
+							when 6 =>
+								
+								audio_fifo_in <= tmp_sample_b & "0";
+								audio_fifo_in_wr_en <= '1';
+								
+								P2_SubState <= 7;			
+							
+							when 7 =>			
+															
+								if lc2_counter < 23 then
+									lc2_counter <= lc2_counter + 1;
+									P2_SubState <= 0;					
+								else
+									lc2_counter <= 0;
+									
+									if (fs_mode_i = "01" and lc2_subframe_counter < 10) or (fs_mode_i = "00" and lc2_subframe_counter < 20) then
+										lc2_subframe_counter <= lc2_subframe_counter + 2;
+										P2_SubState <= 0;	
+															
+									else								
+										lc2_subframe_counter <= 0;
+										lc2_counter <= 24;
+										P2_State <= AuxToFifo;
+										P2_SubState <= 0;
+									end if;					
+								
+								end if;
+							when others => null;
+                        end case;
+					
 						
-						end if;
-					end if;
+					--start copy aux to fifos	
+
+					--init read of lc24
+					when AuxToFifo =>
+						case P2_SubState is
+							when 0 =>	
+								lc2_counter <= 25;
+								P2_SubState <= 1;
+								
+							when 1 =>	
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)), encoded_block_no, lc2_subframe_counter);
+								P2_SubState <= 2;	
+								
+							--init read of lc25
+							when 2 =>
+								lc_ram_b_addr <= lc_ram_addr(to_integer(unsigned'(0 => lc_pingpong_100M_zz)), encoded_block_no, lc2_subframe_counter);
+								P2_SubState <= 3;
+							
+							--save readback of lc24
+							when 3 =>		
+								tmp_aux_lc24 <= lc_ram_do_b;					
+								P2_SubState <= 4;
+								
+							--save readback of lc25
+							when 4 =>
+								tmp_aux_lc25 <= lc_ram_do_b;	
+								P2_SubState <= 5;	
+
+							--write first 16-bit word to fifo
+							when 5 =>	
+								if (lc2_subframe_counter = 0 or lc2_subframe_counter = 11) then
+									aux_fifo_in <= tmp_aux_vector(15 downto 0) & "1";
+								else
+									aux_fifo_in <= tmp_aux_vector(15 downto 0) & "0";
+								end if;
+								aux_fifo_in_wr_en <= '1';
+								
+								P2_SubState <= 6;	
+
+							--write second 16-bit word to fifo					
+							when 6 =>
+								aux_fifo_in <= tmp_aux_vector(31 downto 16) & "0";					
+								aux_fifo_in_wr_en <= '1';
+								P2_SubState <= 7;
+							
+							--write third 16-bit word to fifo
+							when 7 =>
+								aux_fifo_in <= tmp_aux_vector(47 downto 32) & "0";
+								aux_fifo_in_wr_en <= '1';
+								P2_SubState <= 8;
+								
+							--write fourth 16-bit word to fifo			
+							when 8 =>
+								aux_fifo_in <= tmp_aux_vector(63 downto 48) & "0";
+								aux_fifo_in_wr_en <= '1';
+								P2_SubState <= 9;
+								
+							
+							--disable fifo-write, check if we are through or we need to loop. Jump back to wait-data state if finished
+							when 9 =>							
+								if (fs_mode_i = "01" and lc2_subframe_counter < 10) or (fs_mode_i = "00" and lc2_subframe_counter < 21) then
+									lc2_subframe_counter <= lc2_subframe_counter + 1;
+									lc2_counter <= 24;
+									P2_SubState <= 0;						
+								else
+									--finish
+									P2_State <= WaitData;
+									P2_SubState <= 0;
+								end if;		
+						
+							when others => null;
+						end case;
 				
-					
-				--start copy aux to fifos	
-
-				--init read of lc24
-				elsif P2_State = AuxToFifo then
-					if P2_SubState = 0 then		
-						lc2_counter <= 25;
-						P2_SubState <= 1;
-						
-					elsif P2_SubState = 1 then		
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + lc2_subframe_counter;	
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1) + to_unsigned(lc2_subframe_counter, 11));
-						
-						
-						P2_SubState <= 2;	
-						
-					--init read of lc25
-					elsif P2_SubState = 2 then	
-						--lc_ram_b_addr <= lc_fifo_pingpong*704 + encoded_block_no*22 + lc2_subframe_counter;
-						lc_ram_b_addr <= to_integer((to_unsigned(lc_fifo_pingpong, 11) sll 9) + (to_unsigned(lc_fifo_pingpong, 11) sll 7) + (to_unsigned(lc_fifo_pingpong, 11) sll 6) + (to_unsigned(encoded_block_no, 11) sll 4) + (to_unsigned(encoded_block_no, 11) sll 2) + (to_unsigned(encoded_block_no, 11) sll 1) + to_unsigned(lc2_subframe_counter, 11));
-						
-						P2_SubState <= 3;
-					
-					--save readback of lc24
-					elsif P2_SubState = 3 then		
-						tmp_aux_lc24 <= lc_ram_do_b;					
-						P2_SubState <= 4;
-						
-					--save readback of lc25
-					elsif P2_SubState = 4 then	
-						tmp_aux_lc25 <= lc_ram_do_b;				
-
-						P2_SubState <= 5;	
-
-					--write first 16-bit word to fifo
-					elsif P2_SubState = 5 then	
-						if (lc2_subframe_counter = 0 or lc2_subframe_counter = 11) then
-							aux_fifo_in <= tmp_aux_vector(15 downto 0) & "1";
-						else
-							aux_fifo_in <= tmp_aux_vector(15 downto 0) & "0";
-						end if;
-						aux_fifo_in_wr_en <= '1';
-						
-						P2_SubState <= 6;	
-
-					--write second 16-bit word to fifo					
-					elsif P2_SubState = 6 then
-						aux_fifo_in <= tmp_aux_vector(31 downto 16) & "0";					
-				
-						P2_SubState <= 7;
-					
-					--write third 16-bit word to fifo
-					elsif P2_SubState = 7 then
-						aux_fifo_in <= tmp_aux_vector(47 downto 32) & "0";
-						
-						P2_SubState <= 8;
-						
-					--write fourth 16-bit word to fifo			
-					elsif P2_SubState = 8 then
-						aux_fifo_in <= tmp_aux_vector(63 downto 48) & "0";
-						
-						P2_SubState <= 9;
-						
-					
-					--disable fifo-write, check if we are through or we need to loop. Jump back to wait-data state if finished
-					elsif P2_SubState = 9 then
-						aux_fifo_in_wr_en <= '0';
-
-						if (fs_mode_i = "01" and lc2_subframe_counter < 10) or (fs_mode_i = "00" and lc2_subframe_counter < 21) then
-							lc2_subframe_counter <= lc2_subframe_counter + 1;
-							lc2_counter <= 24;
-							P2_SubState <= 0;						
-						else
-							--finish
-							P2_State <= WaitData;
-							P2_SubState <= 0;
-						end if;		
-					end if;
-				
-				end if;
-
+					when others => null;
+				end case;
 			end if;
 
 		end if;
