@@ -50,7 +50,14 @@ use ieee.numeric_std.all;
 
 
 entity aes50_clockmanager is
-
+    generic (
+        -- defaults are based on 100 MHz clock.
+        WD_AES_CLK_TIMEOUT           : natural := 50;
+        WD_AES_RX_DV_TIMEOUT         : natural := 20000;
+        MDIX_TIMER_1MS_REFERENCE     : natural := 100000;
+        AES_CLK_OK_COUNTER_REFERENCE : natural := 10000000;
+        MULT_CLK625_48K              : natural := 8246337;
+        MULT_CLK625_44K1             : natural := 7576322);
     port (
         --system clock inputs
         clk100_i : in std_logic;        -- main logic clock
@@ -93,7 +100,7 @@ entity aes50_clockmanager is
         clock_health_good_o : out std_logic;
 
         --aes-input-stream monitoring
-        eth_rx_dv_watchdog_i   : in  std_logic;
+        eth_rx_dv_watchdog_i   : in  std_logic;  -- receive data valid
         eth_rx_consider_good_o : out std_logic;
 
 
@@ -101,7 +108,8 @@ entity aes50_clockmanager is
         wd_aes_rx_dv_timeout_i         : in integer range 20000 downto 0;    -- 15000@100MHz      
         mdix_timer_1ms_reference_i     : in integer range 100000 downto 0;   -- 100000@100MHz
         aes_clk_ok_counter_reference_i : in integer range 1000000 downto 0;  -- 1000000@100MHz
-        --Those are the multiplicators needed if we are tdm-master as well as aes-master -> we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
+        --Those are the multiplicators needed if we are tdm-master as well as aes-master ->
+        --we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
         mult_clk625_48k_i              : in integer;                         -- 8246337@100MHz
         mult_clk625_44k1_i             : in integer                          -- 7576322@100MHz
 
@@ -110,48 +118,46 @@ end aes50_clockmanager;
 
 architecture rtl of aes50_clockmanager is
 
-    --multiplication values which will be programmed to CS2100PLL - the target is, that we'll always have a 1024xfs clock (49.152 MHz for 48k, or 45.1584 MHz for 44k1)
 
-    --Multiply by x4 if we get a 12.288 or 11.2896 MHz clock driven into our TDM interface (sys-mode: tdm-slave & aes-master)
-    signal mult_clk_x4 : integer := 4194304;
-
-    --Multiply by x16 if we get a 3.072 MHz or 2.8224 MHz signal remotely over the AES-Interface (sys-mode: tdm-master & aes-slave)
-    --the multiply by x16 is also used, when our IP just operates in I2S mode and expects an external BCLK of also 3.072/2.8224 MHz
-    signal mult_clk_x16 : integer := 16777216;
-
-
-
+    -- The selected AES clock coming in, based on MDI and presence.
     signal aes_clk_in  : std_logic;
+    -- the outgoing AES clock, to A or B based on MDI, and can be either AES clock in or the generated clock.
     signal aes_clk_out : std_logic;
 
+    -- 6.25MHz generator for PLL reference.
+    signal clk_625MHz  : std_logic;
 
-    --Variables and counters for 100 MHz process
-
-    --6.25MHz generator
-    signal clk_625MHz_cnt : integer range 15 downto 0;
-    signal clk_625MHz     : std_logic;
-
-    --Watchdogs 
-    signal wd_aes_rx_dv_edge   : std_logic_vector(2 downto 0);
-    signal aes_clk_a_edge_100M : std_logic_vector (2 downto 0);
-    signal aes_clk_b_edge_100M : std_logic_vector (2 downto 0);
-    signal wd_aes_clk_a        : integer range 50 downto 0;
-    signal wd_aes_clk_b        : integer range 50 downto 0;
-    signal wd_aes_rx_dv_in     : integer range 20000 downto 0;
-    signal aes_clock_ok        : std_logic;
+    --
+    -- Watchdogs
+    --
+    -- synchronized edges of the incoming AES clocks pet their dogs.
+    -- failure to pet indicate that the clock isn't present.
+    subtype aes_clk_wd_t is natural range 0 to WD_AES_CLK_TIMEOUT - 1;
+    
+    signal aes_clk_a_edge_100M : std_logic_vector (2 downto 0);  -- AES CLK A synchronizer
+    signal aes_clk_b_edge_100M : std_logic_vector (2 downto 0);  -- AES CLK B synchronizer
+    signal wd_aes_clk_a        : aes_clk_wd_t;  -- watchdog timer for AES rx clk A
+    signal wd_aes_clk_b        : aes_clk_wd_t;  -- watchdog timer for AES rx clk B
+    signal aes_clock_ok        : std_logic;  -- AES RX in clocks and PLL clocks are all good
+    
+    -- synchronized edge of RMII data-valid flag pets the data-present dog.
+    -- when good we assert eth_rx_consider_good_o.
+    subtype wd_rx_dv_type is natural range 0 to WD_AES_RX_DV_TIMEOUT - 1;
+    signal wd_aes_rx_dv_edge   : std_logic_vector(2 downto 0);   -- RMII DV synchronizer
+    signal wd_aes_rx_dv_in     : wd_rx_dv_type;  -- watchdog timer for RMII DV
 
     --lfsr state machine
-    signal lfsr_chain    : std_logic_vector (10 downto 0);
-    signal lfsr_feedback : std_logic;
-    signal lfsr_out      : std_logic;
-    signal mdix          : std_logic;                      --0 is MDI and 1 is MDI-X
-    signal mdix_timer    : integer range 100000 downto 0;  --approx 1ms
+    signal lfsr       : std_logic_vector (10 downto 0);
+    signal mdix       : std_logic;                      --0 is MDI and 1 is MDI-X
+    subtype mdix_timer_t is natural range 0 to MDIX_TIMER_1MS_REFERENCE - 1;
+    signal mdix_timer : mdix_timer_t;
 
-    --initial sync start counter
-    signal aes_clk_ok_counter : integer range 1000000 downto 0;
-
-
-
+    -- initial sync start counter -- hold off everything for 100 ms after clocks are stable per spec.
+    subtype aes_100ms_timer_t is natural range 0 to AES_CLK_OK_COUNTER_REFERENCE - 1;
+    signal aes_clk_ok_counter : aes_100ms_timer_t;
+        
+    ---------------------------------------------------------------------------------------------------------
+    -- In PLL clock domain.
     --Variables and counters for PLL-clock process
 
     --aes-clk generator counter
@@ -183,31 +189,62 @@ architecture rtl of aes50_clockmanager is
 
 begin
 
-    --LFSR chain for the clocking MDI-X change
-    lfsr_feedback <= lfsr_chain(8) xor lfsr_chain(10);
-    lfsr_out      <= lfsr_chain(10);
-
-
-    --by default in MDI (mdix=0), A is TX and B is RX
-    --in MDI-X (mdix=1), A is RX and B is TX
+    -- Clock in source select.
+    -- by default in MDI (mdix=0), A is TX and B is RX
+    -- in MDI-X (mdix=1), A is RX and B is TX
     aes_clk_in <= aes50_clk_b_rx_i when mdix = '0' else aes50_clk_a_rx_i;
 
-    aes_clk_out      <= aes_clk_in  when (sys_mode_i = "00")          else aes_clk_out_gen;
-    --aes_clk_out <= aes_clk_out_gen;
+    -- clock out depends on system mode.
+    -- If this interface is master, our generated clock goes out.
+    -- Otherwise, the output follows the selected clock input.
+    aes_clk_out      <= aes_clk_in  when (sys_mode_i = SYSMODE_AES_SLAVE_TDM_MASTER) else aes_clk_out_gen;
+
+    -- choose port A or B for clock output depending on MDIX.
+    -- reset forces both off.
     aes50_clk_a_tx_o <= aes_clk_out when (mdix = '0' and rst_i = '0') else '0';
     aes50_clk_b_tx_o <= aes_clk_out when (mdix = '1' and rst_i = '0') else '0';
 
-
+    -- enable the selected port's output drivers.
     aes50_clk_a_tx_en_o <= '1' when (mdix = '0' and rst_i = '0') else '0';
     aes50_clk_b_tx_en_o <= '1' when (mdix = '1' and rst_i = '0') else '0';
 
+    -- Choose the PLL reference clock.
+    pll_ref_clk_out_select: process (all) is
+    begin  -- process pll_ref_clk_out_select
+        enabler: if rst_i = '1' then
+            -- force clock to idle  if in reset.
+            clk_to_pll_o <= '0';
+        else
+            selector: case sys_mode_i is
+                when SYSMODE_AES_SLAVE_TDM_MASTER =>
+                    -- as a slave, the master provides the PLL reference clock.
+                    clk_to_pll_o <= aes_clk_in;
+                when SYSMODE_AES_MASTER_TDM_MASTER =>
+                    -- as a master, and we're also driving TDM as master, the 6.25 MHz clock we generated
+                    -- here is the PLL reference clock.
+                    clk_to_pll_o <= clk_625MHz;
+                when SYSMODE_AES_MASTER_TDM_SLAVE =>
+                    -- as a master, and as a TDM slave, we take the bit clock coming in from the TDM interface
+                    -- and drive out out as the PLL reference clock.
+                    clk_to_pll_o <= bclk_readback_i;
+                when others =>
+                    -- illegal selection, no clock.
+                    clk_to_pll_o <= '0';
+            end case selector;
+        end if enabler;
+        
+    end process pll_ref_clk_out_select;
 
-    --pll clk interface
-    clk_to_pll_o <= aes_clk_in when (sys_mode_i = "00" and rst_i = '0') else
-                    clk_625MHz      when (sys_mode_i = "01" and rst_i = '0') else
-                    bclk_readback_i when (sys_mode_i = "10" and rst_i = '0') else
-                    '0';
-
+    -- The PLL reference differs in each of the various modes, so we must set the CS2100's multiplier
+    -- constant so it synthesizes the correct output frequency.
+    pll_mult_select: process (all) is
+    begin  -- process pll_mult_select
+        sys_mode_select: case sys_mode_i is
+            when SYSMODE_AES_SLAVE_TDM_MASTER =>
+                
+            when others => null;
+        end case sys_mode_select;
+    end process pll_mult_select;
 
     pll_mult_value_o <= mult_clk_x16 when (sys_mode_i = "00" or (sys_mode_i = "10" and tdm8_i2s_mode_i = '1')) else
                         mult_clk625_44k1_i when (sys_mode_i = "01" and fs_mode_i = "00") else
@@ -215,134 +252,151 @@ begin
                         mult_clk_x4;    --sys_mode=10 and tdm8-mode
 
 
+    ---------------------------------------------------------------------------------------------------------
     -- Generate a 6.25 MHz reference clock for the CS2100.
-    process (clk100_i)
-    begin
-
-        if (rising_edge(clk100_i)) then
-
-            if (rst_i = '1') then
-                clk_625MHz_cnt <= 0;
-
-                wd_aes_clk_a    <= 0;
-                wd_aes_clk_b    <= 0;
-                wd_aes_rx_dv_in <= 0;
-
-                aes_clock_ok           <= '0';
-                clock_health_good_o    <= '0';
-                eth_rx_consider_good_o <= '0';
-
-                mdix       <= '0';
-                lfsr_chain <= "10110101011";
-                mdix_timer <= mdix_timer_1ms_reference_i;
-
-
-                aes_clk_ok_counter <= 0;
-
-
-
+    ---------------------------------------------------------------------------------------------------------
+    GenPllRefClk: process (clk100_i) is
+        -- 100 / 6.25 = 16 and toggle every 8
+        variable v_clkdiv : natural range 0 to 7;
+    begin  -- process GenPllRefClk
+        if rising_edge(clk100_i) then
+            if rst_i = '0' then
+                v_clkdiv := 0;
+                clk_625MHz <= '1';
             else
-
-                --6.25MHz clock generator       
-                clk_625MHz_cnt <= clk_625MHz_cnt + 1;
-
-                if (clk_625MHz_cnt < 8) then
-                    clk_625MHz <= '1';
+                if v_clkdiv = 0 then
+                    v_clkdiv := 7;
+                    clk_625MHz <= not clk_625MHz;
                 else
-                    clk_625MHz <= '0';
+                    v_clkdiv := v_clkdiv - 1;
                 end if;
+            end if;
+        end if;
+    end process GenPllRefClk;
 
+    ---------------------------------------------------------------------------------------------------------
+    -- Watchdog/presence detect for the two incoming AES receive clocks.
+    ---------------------------------------------------------------------------------------------------------
+    AesClkInWD: process (clk100_i) is
+    begin  -- process AesClkInWD
+        if rising_edge(clk100_i) then
+            if rst_i = '0' then
+                aes_clk_a_edge_100M <= (others => '0');  -- AES CLK A synchronizer
+                aes_clk_b_edge_100M <= (others => '0');  -- AES CLK B synchronizer
+                wd_aes_clk_a        <= 0;                -- watchdog timer for AES rx clk A
+                wd_aes_clk_b        <= 0;                -- watchdog timer for AES rx clk B
+                aes_clock_ok        <= '0';              -- AES RX in clocks and PLL clocks are all good
+                aes_clk_ok_counter  <= 0;                -- both sync ins must be valid for 100 ms before we enable audio
+                clock_health_good_o <= '0';              -- true when AES RX clock are valid
+            else
+                -- synchronizers.
+                aes_clk_a_edge_100M <= aes_clk_a_edge_100M(aes_clk_a_edge_100M'LEFT - 1 downto 0) & aes50_clk_a_rx_i;
+                aes_clk_b_edge_100M <= aes_clk_b_edge_100M(aes_clk_b_edge_100M'LEFT - 1 downto 0) & aes50_clk_b_rx_i;
 
-
-                --apply edge detection for aes-clk-a, aes-clk-b and wd_aes_rx_dv_edge
-                aes_clk_a_edge_100M <= aes_clk_a_edge_100M(1 downto 0)&aes50_clk_a_rx_i;
-                aes_clk_b_edge_100M <= aes_clk_b_edge_100M(1 downto 0)&aes50_clk_b_rx_i;
-
-                wd_aes_rx_dv_edge <= wd_aes_rx_dv_edge(1 downto 0)&eth_rx_dv_watchdog_i;
-
-
-                if (aes_clk_a_edge_100M(2 downto 1) = "01") then
-                    wd_aes_clk_a <= wd_aes_clk_timeout_i;
+                -- rising edge of each input clock pets its dog.
+                watchdog_a: if aes_clk_a_edge_100M(2 downto 1) <= "01" then
+                    wd_aes_clk_a <= WD_AES_CLK_TIMEOUT - 1;
                 else
-                    if (wd_aes_clk_a > 0) then
+                    clk_a_timer: if wd_aes_clk_a > 0 then
                         wd_aes_clk_a <= wd_aes_clk_a - 1;
-                    end if;
-                end if;
+                    end if clk_a_timer;
+                end if watchdog_a;
 
-
-                if (aes_clk_b_edge_100M(2 downto 1) = "01") then
-                    wd_aes_clk_b <= wd_aes_clk_timeout_i;
+                watchdog_b: if aes_clk_b_edge_100M(2 downto 1) <= "01" then
+                    wd_aes_clk_b <= WD_AES_CLK_TIMEOUT - 1;
                 else
-                    if (wd_aes_clk_b > 0) then
+                    clk_b_timer: if wd_aes_clk_b > 0 then
                         wd_aes_clk_b <= wd_aes_clk_b - 1;
-                    end if;
-                end if;
+                    end if clk_b_timer;
+                end if watchdog_b;
 
+                -- indicate that we have clocks, including from the PLL.
+                aes_clock_ok <= '1' when (wd_aes_clk_a > 0) and (wd_aes_clk_b > 0) and (pll_lock_n_i = '0') else '0';
 
-
-
-                --clock health signaling
-                if (wd_aes_clk_a > 0 and wd_aes_clk_b > 0 and pll_lock_n_i = '0') then
-                    aes_clock_ok <= '1';
-                else
-                    aes_clock_ok <= '0';
-                end if;
-
-                --check when to enable audio
-                --if (wd_aes_clk_a > 0 and wd_aes_clk_b > 0 and wd_aes_rx_dv_in > 0) then
-                if (wd_aes_clk_a > 0 and wd_aes_clk_b > 0) then
-                    if (aes_clk_ok_counter < aes_clk_ok_counter_reference_i) then
+                -- we can enable audio when the sync clocks have been present for the 100 ms indicated in
+                -- AES50 spec.
+                clocks_good_100ms: if (wd_aes_clk_a > 0) and (wd_aes_clk_b > 0) then
+                    -- both clocks are present, so count how long they've been so.
+                    -- after 100 ms we declare victory.
+                    clocks_good_counter: if aes_clk_ok_counter < AES_CLK_OK_COUNTER_REFERENCE - 1 then
                         aes_clk_ok_counter <= aes_clk_ok_counter + 1;
                     else
                         clock_health_good_o <= '1';
-                    end if;
+                    end if clocks_good_counter;
                 else
-                    aes_clk_ok_counter  <= 0;
+                    aes_clk_ok_counter <= 0;
                     clock_health_good_o <= '0';
-                end if;
-
-
-                --this is the rmii_rx_dv watchdog               
-                if (wd_aes_rx_dv_edge(2 downto 1) = "01") then
-                    wd_aes_rx_dv_in <= wd_aes_rx_dv_timeout_i;
-                else
-                    if (wd_aes_rx_dv_in > 0) then
-                        wd_aes_rx_dv_in <= wd_aes_rx_dv_in - 1;
-                    end if;
-                end if;
-
-                if (wd_aes_rx_dv_in > 0) then
-                    eth_rx_consider_good_o <= '1';
-                else
-                    eth_rx_consider_good_o <= '0';
-                end if;
-
-
-                --this is the mdix-state-machine implementation 
-
-                if mdix_timer > 0 then
-                    mdix_timer <= mdix_timer - 1;
-
-                --timer is 0
-                else
-                    lfsr_chain <= lfsr_chain(9 downto 0) & lfsr_feedback;  --update chain every 1ms
-                    mdix_timer <= mdix_timer_1ms_reference_i;              --restart timer
-
-                    if (mdix = '0' and lfsr_out = '1' and aes_clock_ok = '0') then
-
-                        mdix <= '1';
-
-                    elsif (mdix = '1' and lfsr_out = '0' and aes_clock_ok = '0') then
-                        mdix <= '0';
-
-                    end if;
-                end if;
-
-
+                end if clocks_good_100ms;
+                
             end if;
         end if;
+    end process AesClkInWD;
 
-    end process;
+    ---------------------------------------------------------------------------------------------------------
+    -- MDI/MDI-X determination, which tells us which clock is in and which is out.
+    -- by default in MDI (mdix=0), A is TX and B is RX
+    -- in MDI-X (mdix=1), A is RX and B is TX.
+    --
+    -- A LFSR gives us some randomness to determine which clock port A or B will be transmit or receive. We
+    -- start by looking at the head of the LSFR to make the choice. The left-most bit of the LFSR is the
+    -- proposed output.
+    -- 
+    -- A millisecond timer runs continuously. Every millisecond, if we have not already detected sync on a
+    -- lock line, we update the LFSR, which then possibly updates our choice of A or B for TX and RX.
+    --
+    -- We use the time in that millisecond to check for the presence of a clock on A or B which will set
+    -- aes_clock_ok, which tells us that we made the correct choice.
+    ---------------------------------------------------------------------------------------------------------
+    mdi_mdix_select: process (clk100_i) is
+    begin  -- process mdi_mdix_select
+        if rising_edge(clk100_i) then
+            if rst_i = '0' then
+                lfsr <= "10110101011";
+                mdix_timer <= MDIX_TIMER_1MS_REFERENCE - 1;
+                mdix <= '0';
+            else
+                timer: if mdix_timer = 0 then
+                    mdix_timer <= MDIX_TIMER_1MS_REFERENCE - 1;
+
+                    -- possibly update mdix choice if we don't see a clock.
+                    no_clock_seen: if aes_clock_ok = '0' then
+                        mdxi <= lfsr(lfsr'left);
+                    end if no_clock_seen;
+
+                    -- update the shifter every millisecond.
+                    -- feedback is z(8) xor z(10)
+                    lfsr <= lfsr(9 downto 0) & (lfsr(8) xor lfsr(10));
+                else
+                    mdix_timer <= mdix_timer - 1;
+                end if timer;
+            end if;
+        end if;
+    end process mdi_mdix_select;
+
+    ---------------------------------------------------------------------------------------------------------
+    -- Indicate that there are data packets coming in.
+    ---------------------------------------------------------------------------------------------------------
+    we_have_data: process (clk100_i) is
+    begin  -- process we_have_data
+        if rising_edge(clk100_i) then
+            if rst_i = '0' then      
+                wd_aes_rx_dv_edge <= (others => '0');  -- synchronizer
+                wd_aes_rx_dv_in <= 0;
+            else
+                wd_aes_rx_dv_edge <= wd_aes_rx_dv_edge(wd_aes_rx_dv_edge'LEFT - 1 downto 0) & eth_rx_dv_watchdog_i;
+
+                dv_wd: if wd_aes_rx_dv_edge = "01" then
+                    wd_aes_rx_dv_in <= WD_AES_RX_DV_TIMEOUT - 1;
+                else
+                    wd_dv_timer: if wd_aes_rx_dv_in > 0 then
+                        wd_aes_rx_dv_in <= wd_aes_rx_dv_in - 1;
+                    end if wd_dv_timer;
+                end if dv_wd;
+
+                eth_rx_consider_good_o <= '1' when wd_aes_rx_dv_in > 0 else '0';
+            end if;
+        end if;
+    end process we_have_data;
 
 
 

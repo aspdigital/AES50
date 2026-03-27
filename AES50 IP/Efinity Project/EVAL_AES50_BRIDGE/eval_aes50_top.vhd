@@ -250,7 +250,8 @@ begin
             wd_aes_rx_dv_timeout_i         => 15000,
             mdix_timer_1ms_reference_i     => 100000,
             aes_clk_ok_counter_reference_i => 1000000,
-            --Those are the multiplicators needed if we are tdm-master as well as aes-master -> we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
+            --Those are the multiplicators needed if we are tdm-master as well as aes-master ->
+            --we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
             mult_clk625_48k_i              => 8246337,
             mult_clk625_44k1_i             => 7576322,
             uart_clks_per_bit_i            => 868,
