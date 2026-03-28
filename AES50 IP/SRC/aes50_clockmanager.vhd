@@ -24,9 +24,11 @@
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 -- ===========================================================================
 
-library IEEE;
-use IEEE.STD_LOGIC_1164.all;
+library ieee;
+use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+
+use work.aes50_pkg.all;
 
 
 --sys-mode description
@@ -51,38 +53,41 @@ use ieee.numeric_std.all;
 
 entity aes50_clockmanager is
     generic (
-        -- defaults are based on 100 MHz clock.
+        -- defaults are based on 100 MHz clock. Scale on instantiation as required.
+        -- TODO: derive from logic clock frequency.
         WD_AES_CLK_TIMEOUT           : natural := 50;
         WD_AES_RX_DV_TIMEOUT         : natural := 20000;
         MDIX_TIMER_1MS_REFERENCE     : natural := 100000;
         AES_CLK_OK_COUNTER_REFERENCE : natural := 10000000;
+        -- These are the multipliers needed if we are tdm-master as well as aes-master ->
+        -- we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain
+        -- and multiply to get 49.152 or 45.1584...
         MULT_CLK625_48K              : natural := 8246337;
         MULT_CLK625_44K1             : natural := 7576322);
     port (
-        --system clock inputs
+        -- system clock inputs
         clk100_i : in std_logic;        -- main logic clock
         rst_i    : in std_logic;        -- reset in that domain
 
-        --samplerate and operation mode
+        -- samplerate and operation mode
         sys_mode_i      : in std_logic_vector(1 downto 0);
         fs_mode_i       : in std_logic_vector(1 downto 0);
         tdm8_i2s_mode_i : in std_logic;
 
-        --interface to external PLL
+        -- interface to external PLL
         clk_1024xfs_from_pll_i : in  std_logic;
         pll_lock_n_i           : in  std_logic;
         clk_to_pll_o           : out std_logic;
         pll_mult_value_o       : out integer;
 
-        --tdm/i2s clk interface
+        -- tdm/i2s clk interface
         mclk_o          : out std_logic;
         wclk_o          : out std_logic;
         bclk_o          : out std_logic;
         wclk_readback_i : in  std_logic;
         bclk_readback_i : in  std_logic;
 
-
-        --connection to clk transceivers
+        -- connection to clk transceivers
         aes50_clk_a_rx_i    : in  std_logic;
         aes50_clk_a_tx_o    : out std_logic;
         aes50_clk_a_tx_en_o : out std_logic;
@@ -91,41 +96,40 @@ entity aes50_clockmanager is
         aes50_clk_b_tx_o    : out std_logic;
         aes50_clk_b_tx_en_o : out std_logic;
 
-
-        --aes frame-sync-marker 
+        -- aes frame-sync-marker 
         assm_self_generated_o : out std_logic;  --outputs assm from our self-generated clock
         assm_remote_o         : out std_logic;  --outputs assm from remote-clock
 
-        --clk state output
+        -- clk state output
         clock_health_good_o : out std_logic;
 
-        --aes-input-stream monitoring
+        -- aes-input-stream monitoring
         eth_rx_dv_watchdog_i   : in  std_logic;  -- receive data valid
-        eth_rx_consider_good_o : out std_logic;
-
-
-        wd_aes_clk_timeout_i           : in integer range 50 downto 0;       -- 50@100MHz
-        wd_aes_rx_dv_timeout_i         : in integer range 20000 downto 0;    -- 15000@100MHz      
-        mdix_timer_1ms_reference_i     : in integer range 100000 downto 0;   -- 100000@100MHz
-        aes_clk_ok_counter_reference_i : in integer range 1000000 downto 0;  -- 1000000@100MHz
-        --Those are the multiplicators needed if we are tdm-master as well as aes-master ->
-        --we feed the PLL with a 6.25 MHz clock generated through our 100 MHz clock-domain and multiply to get 49.152 or 45.1584...
-        mult_clk625_48k_i              : in integer;                         -- 8246337@100MHz
-        mult_clk625_44k1_i             : in integer                          -- 7576322@100MHz
-
-        );
-end aes50_clockmanager;
+        eth_rx_consider_good_o : out std_logic);
+end entity aes50_clockmanager;
 
 architecture rtl of aes50_clockmanager is
 
+    -- multiplier values which will be programmed to CS2100PLL - the target is, that we'll always have a 1024xfs clock
+    -- (49.152 MHz for 48k, or 45.1584 MHz for 44k1)
+    --
+    -- Multiply by x4 if we get a 12.288 or 11.2896 MHz clock driven into our TDM interface (sys-mode: tdm-slave & aes-master)
+    constant MULT_CLK_X4 : natural := 4194304;	
+	
+    -- Multiply by x16 if we get a 3.072 MHz or 2.8224 MHz signal remotely over the AES-Interface (sys-mode: tdm-master & aes-slave)
+    -- the multiply by x16 is also used, when our IP just operates in I2S mode and expects an external BCLK of also 3.072/2.8224 MHz
+    constant MULT_CLK_X16 : natural := 16777216;
 
+    ---------------------------------------------------------------------------------------------------------
+    -- In 100 MHz logic clock domain.
+    ---------------------------------------------------------------------------------------------------------
     -- The selected AES clock coming in, based on MDI and presence.
     signal aes_clk_in  : std_logic;
     -- the outgoing AES clock, to A or B based on MDI, and can be either AES clock in or the generated clock.
     signal aes_clk_out : std_logic;
 
     -- 6.25MHz generator for PLL reference.
-    signal clk_625MHz  : std_logic;
+    signal clk_625MHz : std_logic;
 
     --
     -- Watchdogs
@@ -133,32 +137,40 @@ architecture rtl of aes50_clockmanager is
     -- synchronized edges of the incoming AES clocks pet their dogs.
     -- failure to pet indicate that the clock isn't present.
     subtype aes_clk_wd_t is natural range 0 to WD_AES_CLK_TIMEOUT - 1;
-    
+
     signal aes_clk_a_edge_100M : std_logic_vector (2 downto 0);  -- AES CLK A synchronizer
     signal aes_clk_b_edge_100M : std_logic_vector (2 downto 0);  -- AES CLK B synchronizer
-    signal wd_aes_clk_a        : aes_clk_wd_t;  -- watchdog timer for AES rx clk A
-    signal wd_aes_clk_b        : aes_clk_wd_t;  -- watchdog timer for AES rx clk B
+    signal wd_aes_clk_a        : aes_clk_wd_t;                   -- watchdog timer for AES rx clk A
+    signal wd_aes_clk_b        : aes_clk_wd_t;                   -- watchdog timer for AES rx clk B
     signal aes_clock_ok        : std_logic;  -- AES RX in clocks and PLL clocks are all good
-    
+
     -- synchronized edge of RMII data-valid flag pets the data-present dog.
     -- when good we assert eth_rx_consider_good_o.
     subtype wd_rx_dv_type is natural range 0 to WD_AES_RX_DV_TIMEOUT - 1;
-    signal wd_aes_rx_dv_edge   : std_logic_vector(2 downto 0);   -- RMII DV synchronizer
-    signal wd_aes_rx_dv_in     : wd_rx_dv_type;  -- watchdog timer for RMII DV
+    signal wd_aes_rx_dv_edge : std_logic_vector(2 downto 0);  -- RMII DV synchronizer
+    signal wd_aes_rx_dv_in   : wd_rx_dv_type;                 -- watchdog timer for RMII DV
 
     --lfsr state machine
     signal lfsr       : std_logic_vector (10 downto 0);
-    signal mdix       : std_logic;                      --0 is MDI and 1 is MDI-X
+    signal mdix       : std_logic;      --0 is MDI and 1 is MDI-X
     subtype mdix_timer_t is natural range 0 to MDIX_TIMER_1MS_REFERENCE - 1;
     signal mdix_timer : mdix_timer_t;
 
     -- initial sync start counter -- hold off everything for 100 ms after clocks are stable per spec.
     subtype aes_100ms_timer_t is natural range 0 to AES_CLK_OK_COUNTER_REFERENCE - 1;
     signal aes_clk_ok_counter : aes_100ms_timer_t;
-        
+
     ---------------------------------------------------------------------------------------------------------
+    --
     -- In PLL clock domain.
-    --Variables and counters for PLL-clock process
+    -- 
+    ---------------------------------------------------------------------------------------------------------
+    -- generate a reset in this domain. This is reset by the PLL lock bit, so when the PLL is updated, this
+    -- will reset the dividers and such.
+    constant PLL_RESET_HOLD : natural := 15;                    -- # of clocks after pll locks that we hold this reset active
+    signal pll_rst_hold_cnt : natural range 0 to PLL_RESET_HOLD;      -- count those clocks
+    signal rst_pll : std_logic;         -- reset in the PLL clock domain
+    
 
     --aes-clk generator counter
     signal clk_counter     : std_logic_vector (3 downto 0) := "0000";
@@ -170,18 +182,32 @@ architecture rtl of aes50_clockmanager is
     signal assm_self_latch              : std_logic;
     signal assm_self_do                 : integer range 2 downto 0;
 
-    --remote ass, detect
+    --remote assm detect
     signal assm_remote_detect_counter     : integer range 100 downto 0;
     signal assm_remote_detect_counter_run : std_logic;
     signal assm_remote_out_signal_counter : integer range 10 downto 0;
+
+    -- Sync the AES clock in as selected above to the PLL clock
     signal aes_clk_in_edge_PLL            : std_logic_vector (2 downto 0);
 
+    ---------------------------------------------------------------------------------------------------------
     --TDM8 / I2S clock generator
-    signal tdm8_bclk_mclk_counter : integer range 3 downto 0    := 0;
-    signal tdm8_wclk_counter      : integer range 1023 downto 0 := 2;
-    signal i2s_bclk_counter       : integer range 15 downto 0   := 0;
-    signal i2s_wclk_counter       : integer range 1023 downto 0 := 8;
-
+    ---------------------------------------------------------------------------------------------------------
+    -- synchronizer for format selector:
+    signal tdm8_i2s_mode_sr : std_logic_vector(2 downto 0); 
+    alias tdm8_i2s_mode : std_logic is tdm8_i2s_mode_sr(tdm8_i2s_mode_sr'LEFT);
+    -- the divider. The PLL clock is 1024x the sample rate.
+    signal divcnt : unsigned(9 downto 0);
+    -- bit positions in the divider which hold the divided clocks.
+    -- modulator clock is PLL clock / 4.
+    constant MCLK_IDX : natural := 1;
+    -- TDM bit clock is PLL clock / 4 also
+    constant TDM_BCLK_IDX : natural := 1;
+    -- I2S bit clock is 64X the word clock or PLL clock / 16
+    constant I2S_BCLK_IDX : natural := 3;
+    -- I2S word clock is at the sample rate, or PLL clock / 1024
+    constant I2S_WCLK_IDX : natural := 9;
+ 
 
     -- for sys_mode_i "10" -> wclk-input to aes-clock-sync
     signal wclk_in_edge           : std_logic_vector (2 downto 0);
@@ -197,7 +223,7 @@ begin
     -- clock out depends on system mode.
     -- If this interface is master, our generated clock goes out.
     -- Otherwise, the output follows the selected clock input.
-    aes_clk_out      <= aes_clk_in  when (sys_mode_i = SYSMODE_AES_SLAVE_TDM_MASTER) else aes_clk_out_gen;
+    aes_clk_out <= aes_clk_in when (sys_mode_i = SYSMODE_AES_SLAVE_TDM_MASTER) else aes_clk_out_gen;
 
     -- choose port A or B for clock output depending on MDIX.
     -- reset forces both off.
@@ -209,13 +235,14 @@ begin
     aes50_clk_b_tx_en_o <= '1' when (mdix = '1' and rst_i = '0') else '0';
 
     -- Choose the PLL reference clock.
-    pll_ref_clk_out_select: process (all) is
+    -- note combinatorial process, so we must assign to clk_to_pll_o in all cases.
+    pll_ref_clk_out_select : process (all) is
     begin  -- process pll_ref_clk_out_select
-        enabler: if rst_i = '1' then
+        enabler : if rst_i = '1' then
             -- force clock to idle  if in reset.
             clk_to_pll_o <= '0';
         else
-            selector: case sys_mode_i is
+            selector : case sys_mode_i is
                 when SYSMODE_AES_SLAVE_TDM_MASTER =>
                     -- as a slave, the master provides the PLL reference clock.
                     clk_to_pll_o <= aes_clk_in;
@@ -232,40 +259,65 @@ begin
                     clk_to_pll_o <= '0';
             end case selector;
         end if enabler;
-        
+
     end process pll_ref_clk_out_select;
 
     -- The PLL reference differs in each of the various modes, so we must set the CS2100's multiplier
     -- constant so it synthesizes the correct output frequency.
-    pll_mult_select: process (all) is
+    -- Illegal selections are flagged in simulation and the multiplier set to 0.
+    -- note combinatorial process, so we must assign to pll_mult_value_o in all possible cases.
+    pll_mult_select : process (all) is
     begin  -- process pll_mult_select
-        sys_mode_select: case sys_mode_i is
+        sys_mode_select : case sys_mode_i is
+            
             when SYSMODE_AES_SLAVE_TDM_MASTER =>
+                pll_mult_value_o <= MULT_CLK_X16;
                 
-            when others => null;
+            when SYSMODE_AES_MASTER_TDM_MASTER =>
+                
+                freq_select: case fs_mode_i is
+                    
+                    when FSMODE_44P1 =>
+                        pll_mult_value_o <= MULT_CLK625_44K1;
+                        
+                    when FSMODE_48 =>
+                        pll_mult_value_o <= MULT_CLK625_48K;
+                        
+                    when others =>
+                        -- we don't support other values.
+                        pll_mult_value_o <= 0;
+                        report "INVALID FSMODE SELECTION!" severity WARNING;
+                        
+                end case freq_select;
+
+            when SYSMODE_AES_MASTER_TDM_SLAVE =>
+                i2s_or_tdm: if tdm8_i2s_mode_i = TDMI2S_SEL_I2S then
+                    pll_mult_value_o <= MULT_CLK_X16; 
+                else
+                    pll_mult_value_o <= MULT_CLK_X4;                         
+                end if i2s_or_tdm;
+                
+            when others =>
+                pll_mult_value_o <= 0;
+                report "INVALID SYSMODE SELECTION!" severity WARNING;
         end case sys_mode_select;
+        
     end process pll_mult_select;
-
-    pll_mult_value_o <= mult_clk_x16 when (sys_mode_i = "00" or (sys_mode_i = "10" and tdm8_i2s_mode_i = '1')) else
-                        mult_clk625_44k1_i when (sys_mode_i = "01" and fs_mode_i = "00") else
-                        mult_clk625_48k_i  when (sys_mode_i = "01" and fs_mode_i = "01") else
-                        mult_clk_x4;    --sys_mode=10 and tdm8-mode
-
 
     ---------------------------------------------------------------------------------------------------------
     -- Generate a 6.25 MHz reference clock for the CS2100.
     ---------------------------------------------------------------------------------------------------------
-    GenPllRefClk: process (clk100_i) is
+    GenPllRefClk : process (clk100_i) is
         -- 100 / 6.25 = 16 and toggle every 8
         variable v_clkdiv : natural range 0 to 7;
     begin  -- process GenPllRefClk
         if rising_edge(clk100_i) then
             if rst_i = '0' then
-                v_clkdiv := 0;
+                v_clkdiv   := 0;
                 clk_625MHz <= '1';
             else
                 if v_clkdiv = 0 then
-                    v_clkdiv := 7;
+                    v_clkdiv   := 7;
                     clk_625MHz <= not clk_625MHz;
                 else
                     v_clkdiv := v_clkdiv - 1;
@@ -277,16 +329,16 @@ begin
     ---------------------------------------------------------------------------------------------------------
     -- Watchdog/presence detect for the two incoming AES receive clocks.
     ---------------------------------------------------------------------------------------------------------
-    AesClkInWD: process (clk100_i) is
+    AesClkInWD : process (clk100_i) is
     begin  -- process AesClkInWD
         if rising_edge(clk100_i) then
             if rst_i = '0' then
                 aes_clk_a_edge_100M <= (others => '0');  -- AES CLK A synchronizer
                 aes_clk_b_edge_100M <= (others => '0');  -- AES CLK B synchronizer
-                wd_aes_clk_a        <= 0;                -- watchdog timer for AES rx clk A
-                wd_aes_clk_b        <= 0;                -- watchdog timer for AES rx clk B
+                wd_aes_clk_a        <= 0;  -- watchdog timer for AES rx clk A
+                wd_aes_clk_b        <= 0;  -- watchdog timer for AES rx clk B
                 aes_clock_ok        <= '0';              -- AES RX in clocks and PLL clocks are all good
-                aes_clk_ok_counter  <= 0;                -- both sync ins must be valid for 100 ms before we enable audio
+                aes_clk_ok_counter  <= 0;  -- both sync ins must be valid for 100 ms before we enable audio
                 clock_health_good_o <= '0';              -- true when AES RX clock are valid
             else
                 -- synchronizers.
@@ -294,18 +346,18 @@ begin
                 aes_clk_b_edge_100M <= aes_clk_b_edge_100M(aes_clk_b_edge_100M'LEFT - 1 downto 0) & aes50_clk_b_rx_i;
 
                 -- rising edge of each input clock pets its dog.
-                watchdog_a: if aes_clk_a_edge_100M(2 downto 1) <= "01" then
+                watchdog_a : if aes_clk_a_edge_100M(2 downto 1) <= "01" then
                     wd_aes_clk_a <= WD_AES_CLK_TIMEOUT - 1;
                 else
-                    clk_a_timer: if wd_aes_clk_a > 0 then
+                    clk_a_timer : if wd_aes_clk_a > 0 then
                         wd_aes_clk_a <= wd_aes_clk_a - 1;
                     end if clk_a_timer;
                 end if watchdog_a;
 
-                watchdog_b: if aes_clk_b_edge_100M(2 downto 1) <= "01" then
+                watchdog_b : if aes_clk_b_edge_100M(2 downto 1) <= "01" then
                     wd_aes_clk_b <= WD_AES_CLK_TIMEOUT - 1;
                 else
-                    clk_b_timer: if wd_aes_clk_b > 0 then
+                    clk_b_timer : if wd_aes_clk_b > 0 then
                         wd_aes_clk_b <= wd_aes_clk_b - 1;
                     end if clk_b_timer;
                 end if watchdog_b;
@@ -315,19 +367,19 @@ begin
 
                 -- we can enable audio when the sync clocks have been present for the 100 ms indicated in
                 -- AES50 spec.
-                clocks_good_100ms: if (wd_aes_clk_a > 0) and (wd_aes_clk_b > 0) then
+                clocks_good_100ms : if (wd_aes_clk_a > 0) and (wd_aes_clk_b > 0) then
                     -- both clocks are present, so count how long they've been so.
                     -- after 100 ms we declare victory.
-                    clocks_good_counter: if aes_clk_ok_counter < AES_CLK_OK_COUNTER_REFERENCE - 1 then
+                    clocks_good_counter : if aes_clk_ok_counter < AES_CLK_OK_COUNTER_REFERENCE - 1 then
                         aes_clk_ok_counter <= aes_clk_ok_counter + 1;
                     else
                         clock_health_good_o <= '1';
                     end if clocks_good_counter;
                 else
-                    aes_clk_ok_counter <= 0;
+                    aes_clk_ok_counter  <= 0;
                     clock_health_good_o <= '0';
                 end if clocks_good_100ms;
-                
+
             end if;
         end if;
     end process AesClkInWD;
@@ -347,20 +399,20 @@ begin
     -- We use the time in that millisecond to check for the presence of a clock on A or B which will set
     -- aes_clock_ok, which tells us that we made the correct choice.
     ---------------------------------------------------------------------------------------------------------
-    mdi_mdix_select: process (clk100_i) is
+    mdi_mdix_select : process (clk100_i) is
     begin  -- process mdi_mdix_select
         if rising_edge(clk100_i) then
             if rst_i = '0' then
-                lfsr <= "10110101011";
+                lfsr       <= "10110101011";
                 mdix_timer <= MDIX_TIMER_1MS_REFERENCE - 1;
-                mdix <= '0';
+                mdix       <= '0';
             else
-                timer: if mdix_timer = 0 then
+                timer : if mdix_timer = 0 then
                     mdix_timer <= MDIX_TIMER_1MS_REFERENCE - 1;
 
                     -- possibly update mdix choice if we don't see a clock.
-                    no_clock_seen: if aes_clock_ok = '0' then
-                        mdxi <= lfsr(lfsr'left);
+                    no_clock_seen : if aes_clock_ok = '0' then
+                        mdix <= lfsr(lfsr'LEFT);
                     end if no_clock_seen;
 
                     -- update the shifter every millisecond.
@@ -376,236 +428,244 @@ begin
     ---------------------------------------------------------------------------------------------------------
     -- Indicate that there are data packets coming in.
     ---------------------------------------------------------------------------------------------------------
-    we_have_data: process (clk100_i) is
+    we_have_data : process (clk100_i) is
     begin  -- process we_have_data
         if rising_edge(clk100_i) then
-            if rst_i = '0' then      
+            if rst_i = '0' then
                 wd_aes_rx_dv_edge <= (others => '0');  -- synchronizer
-                wd_aes_rx_dv_in <= 0;
+                wd_aes_rx_dv_in   <= 0;
             else
                 wd_aes_rx_dv_edge <= wd_aes_rx_dv_edge(wd_aes_rx_dv_edge'LEFT - 1 downto 0) & eth_rx_dv_watchdog_i;
 
-                dv_wd: if wd_aes_rx_dv_edge = "01" then
+                dv_wd : if wd_aes_rx_dv_edge = "01" then
                     wd_aes_rx_dv_in <= WD_AES_RX_DV_TIMEOUT - 1;
                 else
-                    wd_dv_timer: if wd_aes_rx_dv_in > 0 then
+                    wd_dv_timer : if wd_aes_rx_dv_in > 0 then
                         wd_aes_rx_dv_in <= wd_aes_rx_dv_in - 1;
                     end if wd_dv_timer;
                 end if dv_wd;
 
+                -- tell the world we have data.
                 eth_rx_consider_good_o <= '1' when wd_aes_rx_dv_in > 0 else '0';
             end if;
         end if;
     end process we_have_data;
 
-
-
-    process (clk_1024xfs_from_pll_i, rst_i)
-    begin
-
-        if rst_i = '1' then
-
-            clk_counter                  <= "0000";
-            aes_sync_counter             <= 2;
-            assm_self_latch              <= '0';
-            assm_self_do                 <= 0;
-            assm_self_out_signal_counter <= 0;
-            wclk_to_aes_count_sync       <= 1023;
-
-        elsif (rising_edge(clk_1024xfs_from_pll_i)) then
-
-
-            aes_clk_in_edge_PLL <= aes_clk_in_edge_PLL(1 downto 0)&aes_clk_in;
-
-            if (aes_clk_in_edge_PLL(2 downto 1) = "01") then
-                assm_remote_detect_counter     <= 0;
-                assm_remote_detect_counter_run <= '1';
-
-            elsif (aes_clk_in_edge_PLL(2 downto 1) = "10") then
-                if (assm_remote_detect_counter > 8) then
-                    --detected
-                    assm_remote_out_signal_counter <= 10;
-                end if;
-                assm_remote_detect_counter_run <= '0';
+    ---------------------------------------------------------------------------------------------------------
+    -- In PLL clock domain.
+    ---------------------------------------------------------------------------------------------------------
+    -- Generate a reset in the PLL domain.
+    -- Hold all logic in this domain in reset while the PLL is not locked, and continue to keep the reset
+    -- active for a short time after the PLL is running and its clock output is valid.
+    -- lock signal is active low, so our reset is when it is high.
+    reset_in_pll_domain: process (clk_1024xfs_from_pll_i, pll_lock_n_i) is
+    begin  -- process reset_in_pll_domain
+        if pll_lock_n_i = '1' then
+            pll_rst_hold_cnt <= PLL_RESET_HOLD;
+            rst_pll <= '1';             -- start asserted
+        elsif rising_edge(clk_1024xfs_from_pll_i) then
+            reset_holder: if pll_rst_hold_cnt > 0 then
+                pll_rst_hold_cnt <= pll_rst_hold_cnt - 1;
+                rst_pll <= '1';
             else
-                if (assm_remote_out_signal_counter > 0) then
-                    assm_remote_out_signal_counter <= assm_remote_out_signal_counter - 1;
-                    assm_remote_o                  <= '1';
-                else
-                    assm_remote_o <= '0';
-                end if;
+                rst_pll <= '0';
+            end if reset_holder;
+        end if;
+    end process reset_in_pll_domain;
+    
+    -- Sync the selected AES input clock to the PLL domain.
+    -- 
 
-                if (assm_remote_detect_counter_run = '1') then
-                    assm_remote_detect_counter <= assm_remote_detect_counter + 1;
-                end if;
+    -- process (clk_1024xfs_from_pll_i, rst_i)
+    -- begin
 
-            end if;
+    --     if rst_i = '1' then
 
+    --         clk_counter                  <= "0000";
+    --         aes_sync_counter             <= 2;
+    --         assm_self_latch              <= '0';
+    --         assm_self_do                 <= 0;
+    --         assm_self_out_signal_counter <= 0;
+    --         wclk_to_aes_count_sync       <= 1023;
 
-
-
-            --running continously..
-
-            clk_counter <= std_logic_vector(unsigned(clk_counter) + to_unsigned(1, 4));
-
-
-
-            --this aes-sync counter is only needed in case of fs_mode_i 01
-            if (clk_counter = "1111") then
-
-                if (tdm8_i2s_mode_i = '0') then
-                    wclk_in_edge <= wclk_in_edge(1 downto 0)&wclk_readback_i;
-                else
-                    --in i2s mode, we need to negate the wclk_readback as left-sample in i2s starts with wclk=low, instead of high-pulse in tdm8
-                    wclk_in_edge <= wclk_in_edge(1 downto 0)&(not wclk_readback_i);
-                end if;
-
-                --sync one time after reset
-                if (sys_mode_i = "10" and wclk_to_aes_count_sync > 0 and wclk_in_edge(2 downto 1) = "01") then
-                    aes_sync_counter       <= 0;
-                    wclk_to_aes_count_sync <= wclk_to_aes_count_sync - 1;
-
-                else
-                    if (aes_sync_counter < 131071) then
-                        aes_sync_counter <= aes_sync_counter + 1;
-                    else
-                        aes_sync_counter <= 0;
-                    end if;
+    --     elsif (rising_edge(clk_1024xfs_from_pll_i)) then
 
 
-                end if;
-            end if;
+    --         aes_clk_in_edge_PLL <= aes_clk_in_edge_PLL(1 downto 0)&aes_clk_in;
+
+    --         if (aes_clk_in_edge_PLL(2 downto 1) = "01") then
+    --             assm_remote_detect_counter     <= 0;
+    --             assm_remote_detect_counter_run <= '1';
+
+    --         elsif (aes_clk_in_edge_PLL(2 downto 1) = "10") then
+    --             if (assm_remote_detect_counter > 8) then
+    --                 --detected
+    --                 assm_remote_out_signal_counter <= 10;
+    --             end if;
+    --             assm_remote_detect_counter_run <= '0';
+    --         else
+    --             if (assm_remote_out_signal_counter > 0) then
+    --                 assm_remote_out_signal_counter <= assm_remote_out_signal_counter - 1;
+    --                 assm_remote_o                  <= '1';
+    --             else
+    --                 assm_remote_o <= '0';
+    --             end if;
+
+    --             if (assm_remote_detect_counter_run = '1') then
+    --                 assm_remote_detect_counter <= assm_remote_detect_counter + 1;
+    --             end if;
+
+    --         end if;
+
+
+
+
+    --         --running continously..
+
+    --         clk_counter <= std_logic_vector(unsigned(clk_counter) + to_unsigned(1, 4));
+
+
+
+    --         --this aes-sync counter is only needed in case of fs_mode_i 01
+    --         if (clk_counter = "1111") then
+
+    --             if (tdm8_i2s_mode_i = '0') then
+    --                 wclk_in_edge <= wclk_in_edge(1 downto 0)&wclk_readback_i;
+    --             else
+    --                 --in i2s mode, we need to negate the wclk_readback as left-sample in i2s starts with wclk=low, instead of high-pulse in tdm8
+    --                 wclk_in_edge <= wclk_in_edge(1 downto 0)&(not wclk_readback_i);
+    --             end if;
+
+    --             --sync one time after reset
+    --             if (sys_mode_i = "10" and wclk_to_aes_count_sync > 0 and wclk_in_edge(2 downto 1) = "01") then
+    --                 aes_sync_counter       <= 0;
+    --                 wclk_to_aes_count_sync <= wclk_to_aes_count_sync - 1;
+
+    --             else
+    --                 if (aes_sync_counter < 131071) then
+    --                     aes_sync_counter <= aes_sync_counter + 1;
+    --                 else
+    --                     aes_sync_counter <= 0;
+    --                 end if;
+
+
+    --             end if;
+    --         end if;
 
 
 
             --aes clock output generator with assm markers      
 
             --this is the start condition for initiating the assm sync-marker
-            if (((sys_mode_i = "01") or (sys_mode_i = "10" and wclk_to_aes_count_sync = 0)) and aes_sync_counter = 0 and clk_counter = "0000") then
-                assm_self_out_signal_counter <= 10;
+    --         if (((sys_mode_i = "01") or (sys_mode_i = "10" and wclk_to_aes_count_sync = 0)) and aes_sync_counter = 0 and clk_counter = "0000") then
+    --             assm_self_out_signal_counter <= 10;
 
-            else
-                if (assm_self_out_signal_counter > 0) then
-                    assm_self_out_signal_counter <= assm_self_out_signal_counter - 1;
-                    assm_self_generated_o        <= '1';
-                    assm_self_latch              <= '1';
-                else
-                    assm_self_generated_o <= '0';
+    --         else
+    --             if (assm_self_out_signal_counter > 0) then
+    --                 assm_self_out_signal_counter <= assm_self_out_signal_counter - 1;
+    --                 assm_self_generated_o        <= '1';
+    --                 assm_self_latch              <= '1';
+    --             else
+    --                 assm_self_generated_o <= '0';
 
-                    if (assm_self_do = 2 and assm_self_latch = '1' and clk_counter = "1111") then
-                        assm_self_latch <= '0';
-                    end if;
+    --                 if (assm_self_do = 2 and assm_self_latch = '1' and clk_counter = "1111") then
+    --                     assm_self_latch <= '0';
+    --                 end if;
 
-                end if;
+    --             end if;
 
-            end if;
+    --         end if;
 
-            --this generates the actual clock
-            if (clk_counter = "0000" and assm_self_latch = '1' and assm_self_do = 0) then
-                assm_self_do <= 1;
-            elsif (clk_counter = "0000" and assm_self_latch = '1' and assm_self_do = 1) then
-                assm_self_do <= 2;
-            elsif (clk_counter = "1111" and assm_self_do = 2) then
-                assm_self_do <= 0;
-            end if;
+    --         --this generates the actual clock
+    --         if (clk_counter = "0000" and assm_self_latch = '1' and assm_self_do = 0) then
+    --             assm_self_do <= 1;
+    --         elsif (clk_counter = "0000" and assm_self_latch = '1' and assm_self_do = 1) then
+    --             assm_self_do <= 2;
+    --         elsif (clk_counter = "1111" and assm_self_do = 2) then
+    --             assm_self_do <= 0;
+    --         end if;
 
-            --do short pulse
-            if (assm_self_do = 1) then
-                if (unsigned(clk_counter) < to_unsigned(6, 4)) then
-                    aes_clk_out_gen <= '1';
-                else
-                    aes_clk_out_gen <= '0';
-                end if;
-            --do long pulse     
-            elsif (assm_self_do = 2) then
-                if (unsigned(clk_counter) < to_unsigned(10, 4)) then
-                    aes_clk_out_gen <= '1';
-                else
-                    aes_clk_out_gen <= '0';
-                end if;
+    --         --do short pulse
+    --         if (assm_self_do = 1) then
+    --             if (unsigned(clk_counter) < to_unsigned(6, 4)) then
+    --                 aes_clk_out_gen <= '1';
+    --             else
+    --                 aes_clk_out_gen <= '0';
+    --             end if;
+    --         --do long pulse     
+    --         elsif (assm_self_do = 2) then
+    --             if (unsigned(clk_counter) < to_unsigned(10, 4)) then
+    --                 aes_clk_out_gen <= '1';
+    --             else
+    --                 aes_clk_out_gen <= '0';
+    --             end if;
 
-            --do normal pulse
-            else
-                if (unsigned(clk_counter) < to_unsigned(8, 4)) then
-                    aes_clk_out_gen <= '1';
-                else
-                    aes_clk_out_gen <= '0';
-                end if;
-            end if;
-
-
+    --         --do normal pulse
+    --         else
+    --             if (unsigned(clk_counter) < to_unsigned(8, 4)) then
+    --                 aes_clk_out_gen <= '1';
+    --             else
+    --                 aes_clk_out_gen <= '0';
+    --             end if;
+    --         end if;
 
 
-            --this counter always runs, because it's not only the TDM8-BCLK, but also the MCLK which is probably needed for external I2S devices.
-            if (tdm8_bclk_mclk_counter < 3) then
-                tdm8_bclk_mclk_counter <= tdm8_bclk_mclk_counter + 1;
-            else
-                tdm8_bclk_mclk_counter <= 0;
-            end if;
-            if (tdm8_bclk_mclk_counter < 2) then
-                mclk_o <= '1';
-            else
+    --     end if;
+
+    -- end process;
+
+    ---------------------------------------------------------------------------------------------------------
+    -- TDM/I2S clocking.
+    --
+    -- Given the PLL clock at 1024x Fs,
+    --
+    -- For I2S clocking:
+    --          LRCLK (wclk) at Fs, so PLL clock / 1024
+    --          BCLK is 64x LRCLK or PLL clock / 16.
+    --          MCLK is 256x LRCLK or PLL clock / 4.
+    --  Note that LRCLK changes on the falling edge of BCLK.
+    --
+    -- For TDM clocking:
+    --          Frame sync at Fs, so PLL clock / 1024, and the width is a channel block or 32 BCLKs.
+    --          BCLK assumes 8 channel blocks of 32 bits each or 256 clocks, so PLL clock / 4.
+    --  Note that frame sync channels on the falling edge of BCLK.
+    --
+    -- Unsigned is used for the divider counter because it's easy to just pick the correct bit for each
+    -- divided clock.
+    ---------------------------------------------------------------------------------------------------------
+    tdm_i2s_clock_generator: process (clk_1024xfs_from_pll_i) is
+    begin  -- process tdm_i2s_clock_generator
+        if rising_edge(clk_1024xfs_from_pll_i) then
+            if rst_pll = '1' then
+                tdm8_i2s_mode_sr <= (others => '0');  -- synchronizer flops.
+                divcnt <= (others => '0');
+                bclk_o <= '0';
+                wclk_o <= '0';
                 mclk_o <= '0';
-            end if;
-
-
-            if (tdm8_i2s_mode_i = '0') then
-
-                --Clock Generator for TDM8 Mode 
-
-                if (tdm8_wclk_counter < 1023) then
-                    tdm8_wclk_counter <= tdm8_wclk_counter + 1;
-                else
-                    tdm8_wclk_counter <= 0;
-                end if;
-
-                if (tdm8_wclk_counter < 32) then
-                    wclk_o <= '1';
-                else
-                    wclk_o <= '0';
-                end if;
-
-                if (tdm8_bclk_mclk_counter < 2) then
-                    bclk_o <= '1';
-                else
-                    bclk_o <= '0';
-                end if;
-
             else
+                -- sync the format selector bit to this clock.
+                tdm8_i2s_mode_sr <= tdm8_i2s_mode_sr(tdm8_i2s_mode_sr'LEFT - 1 downto 0) & tdm8_i2s_mode_i;
+                
+                -- the divider counter always free-runs.
+                -- since it's unsigned, we don't need to test for rollover. It will do it automatically (and
+                -- not throw an error in simulation).
+                divcnt <= divcnt + 1;
 
-                --Clock Generator for I2S Mode
+                -- modulator clock is PLL clock / 4.
+                mclk_o <= std_logic(divcnt(MCLK_IDX));
 
-                if (i2s_bclk_counter < 15) then
-                    i2s_bclk_counter <= i2s_bclk_counter + 1;
+                -- frequency of bit clock depends on mode.
+                bclk_o <= std_logic(divcnt(TDM_BCLK_IDX)) when tdm8_i2s_mode = TDMI2S_SEL_TDM else std_logic(divcnt(I2S_BCLK_IDX));
+
+                -- width of frame sync/word clock depends on mode.
+                -- In TDM the frame sync is the width of one channel block out of the eight.
+                -- In I2S the LRCLK is 50% duty cycle at the sample rate.
+                word_clock_divider: if tdm8_i2s_mode = TDMI2S_SEL_TDM then
+                    wclk_o <= '1' when divcnt < 32 else '0';
                 else
-                    i2s_bclk_counter <= 0;
-                end if;
-
-                if (i2s_wclk_counter < 1023) then
-                    i2s_wclk_counter <= i2s_wclk_counter + 1;
-                else
-                    i2s_wclk_counter <= 0;
-                end if;
-
-                if (i2s_wclk_counter < 512) then
-                    wclk_o <= '0';
-                else
-                    wclk_o <= '1';
-                end if;
-
-                if (i2s_bclk_counter < 8) then
-                    bclk_o <= '1';
-                else
-                    bclk_o <= '0';
-                end if;
-
+                    wclk_o <= std_logic(divcnt(I2S_WCLK_IDX));
+                end if word_clock_divider;
             end if;
-
-
-
-
-
         end if;
-
-    end process;
+    end process tdm_i2s_clock_generator;
 end architecture;

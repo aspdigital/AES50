@@ -1,0 +1,41 @@
+[*]
+[*] GTKWave Analyzer v3.4.0 (w)1999-2022 BSI
+[*] Sat Mar 28 07:29:11 2026
+[*]
+[dumpfile] "/Users/andy/Projects/AES50/AES50 IP/tb/cm.ghw"
+[dumpfile_mtime] "Sat Mar 28 07:28:31 2026"
+[dumpfile_size] 15504164
+[savefile] "/Users/andy/Projects/AES50/AES50 IP/tb/cm.gtkw"
+[timestart] 553800000000
+[size] 2344 1199
+[pos] -1 -1
+*-36.900002 432544104042 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] top.
+[treeopen] top.aes50_clockmanager_tb.
+[treeopen] top.aes50_clockmanager_tb.dut.
+[sst_width] 253
+[signals_width] 339
+[sst_expanded] 1
+[sst_vpaned_height] 368
+@28
+#{top.aes50_clockmanager_tb.sys_mode_i[1:0]} top.aes50_clockmanager_tb.sys_mode_i[1] top.aes50_clockmanager_tb.sys_mode_i[0]
+top.aes50_clockmanager_tb.tbarst
+top.aes50_clockmanager_tb.clk100_i
+top.aes50_clockmanager_tb.rst_i
+top.aes50_clockmanager_tb.tdm8_i2s_mode_i
+top.aes50_clockmanager_tb.clk_1024xfs_from_pll_i
+@80000024
+top.aes50_clockmanager_tb.sample_period
+@28
+top.aes50_clockmanager_tb.mclk_o
+top.aes50_clockmanager_tb.bclk_o
+top.aes50_clockmanager_tb.wclk_o
+top.aes50_clockmanager_tb.pll_lock_n_i
+@25
+#{top.aes50_clockmanager_tb.dut.divcnt[9:0]} top.aes50_clockmanager_tb.dut.divcnt[9] top.aes50_clockmanager_tb.dut.divcnt[8] top.aes50_clockmanager_tb.dut.divcnt[7] top.aes50_clockmanager_tb.dut.divcnt[6] top.aes50_clockmanager_tb.dut.divcnt[5] top.aes50_clockmanager_tb.dut.divcnt[4] top.aes50_clockmanager_tb.dut.divcnt[3] top.aes50_clockmanager_tb.dut.divcnt[2] top.aes50_clockmanager_tb.dut.divcnt[1] top.aes50_clockmanager_tb.dut.divcnt[0]
+@420
+top.aes50_clockmanager_tb.dut.pll_rst_hold_cnt
+@28
+top.aes50_clockmanager_tb.dut.rst_pll
+[pattern_trace] 1
+[pattern_trace] 0
