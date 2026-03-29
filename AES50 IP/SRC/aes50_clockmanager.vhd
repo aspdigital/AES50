@@ -75,17 +75,19 @@ entity aes50_clockmanager is
         tdm8_i2s_mode_i : in std_logic;
 
         -- interface to external PLL
-        clk_1024xfs_from_pll_i : in  std_logic;
-        pll_lock_n_i           : in  std_logic;
-        clk_to_pll_o           : out std_logic;
-        pll_mult_value_o       : out integer;
+        clk_1024xfs_from_pll_i : in  std_logic;  -- from PLL, a multiple of the sample rate
+        pll_lock_n_i           : in  std_logic;  -- true (low)  when that clock is valid
+        clk_to_pll_o           : out std_logic;  -- PLL reference clock generated here
+        pll_mult_value_o       : out natural;  -- multiplier value to load into PLL
 
-        -- tdm/i2s clk interface
-        mclk_o          : out std_logic;
-        wclk_o          : out std_logic;
-        bclk_o          : out std_logic;
-        wclk_readback_i : in  std_logic;
-        bclk_readback_i : in  std_logic;
+        -- tdm/i2s clk interface.
+        -- outputs are used when we are master.
+        -- inputs are from external master.
+        mclk_o          : out std_logic;  -- modulator clock
+        wclk_o          : out std_logic;  -- word/LRCLK or frame sync
+        bclk_o          : out std_logic;  -- bit or shift clock
+        wclk_readback_i : in  std_logic;  -- word/LRCLK/frame sync from ext. master
+        bclk_readback_i : in  std_logic;  -- bit clock from external master
 
         -- connection to clk transceivers
         aes50_clk_a_rx_i    : in  std_logic;
@@ -167,9 +169,9 @@ architecture rtl of aes50_clockmanager is
     ---------------------------------------------------------------------------------------------------------
     -- generate a reset in this domain. This is reset by the PLL lock bit, so when the PLL is updated, this
     -- will reset the dividers and such.
-    constant PLL_RESET_HOLD : natural := 15;                    -- # of clocks after pll locks that we hold this reset active
-    signal pll_rst_hold_cnt : natural range 0 to PLL_RESET_HOLD;      -- count those clocks
-    signal rst_pll : std_logic;         -- reset in the PLL clock domain
+    constant PLL_RESET_HOLD : natural := 15;                            -- # of clocks after pll locks that we hold this reset active
+    signal pll_rst_hold_cnt : natural range 0 to PLL_RESET_HOLD;        -- count those clocks
+    signal rst_pll          : std_logic;                                -- reset in the PLL clock domain
     
 
     --aes-clk generator counter
@@ -265,43 +267,50 @@ begin
     -- The PLL reference differs in each of the various modes, so we must set the CS2100's multiplier
     -- constant so it synthesizes the correct output frequency.
     -- Illegal selections are flagged in simulation and the multiplier set to 0.
-    -- note combinatorial process, so we must assign to pll_mult_value_o in all possible cases.
-    pll_mult_select : process (all) is
+    pll_mult_select : process (clk100_i) is
     begin  -- process pll_mult_select
-        sys_mode_select : case sys_mode_i is
-            
-            when SYSMODE_AES_SLAVE_TDM_MASTER =>
-                pll_mult_value_o <= MULT_CLK_X16;
-                
-            when SYSMODE_AES_MASTER_TDM_MASTER =>
-                
-                freq_select: case fs_mode_i is
-                    
-                    when FSMODE_44P1 =>
-                        pll_mult_value_o <= MULT_CLK625_44K1;
-                        
-                    when FSMODE_48 =>
-                        pll_mult_value_o <= MULT_CLK625_48K;
-                        
-                    when others =>
-                        -- we don't support other values.
-                        pll_mult_value_o <= 0;
-                        report "INVALID FSMODE SELECTION!" severity WARNING;
-                        
-                end case freq_select;
-
-            when SYSMODE_AES_MASTER_TDM_SLAVE =>
-                i2s_or_tdm: if tdm8_i2s_mode_i = TDMI2S_SEL_I2S then
-                    pll_mult_value_o <= MULT_CLK_X16; 
-                else
-                    pll_mult_value_o <= MULT_CLK_X4;                         
-                end if i2s_or_tdm;
-                
-            when others =>
+        if rising_edge(clk100_i) then
+            if rst_i = '1' then
                 pll_mult_value_o <= 0;
-                report "INVALID SYSMODE SELECTION!" severity WARNING;
-        end case sys_mode_select;
-        
+            else
+                
+                sys_mode_select : case sys_mode_i is
+
+                    when SYSMODE_AES_SLAVE_TDM_MASTER =>
+                        pll_mult_value_o <= MULT_CLK_X16;
+
+                    when SYSMODE_AES_MASTER_TDM_MASTER =>
+
+                        freq_select : case fs_mode_i is
+
+                            when FSMODE_44P1 =>
+                                pll_mult_value_o <= MULT_CLK625_44K1;
+
+                            when FSMODE_48 =>
+                                pll_mult_value_o <= MULT_CLK625_48K;
+
+                            when others =>
+                                -- we don't support other values.
+                                pll_mult_value_o <= 0;
+                                report "INVALID FSMODE SELECTION!" severity WARNING;
+
+                        end case freq_select;
+
+                    when SYSMODE_AES_MASTER_TDM_SLAVE =>
+                        i2s_or_tdm : if tdm8_i2s_mode_i = TDMI2S_SEL_I2S then
+                            pll_mult_value_o <= MULT_CLK_X16;
+                        else
+                            pll_mult_value_o <= MULT_CLK_X4;
+                        end if i2s_or_tdm;
+
+                    when others =>
+                        pll_mult_value_o <= 0;
+                        report "INVALID SYSMODE SELECTION!" severity WARNING;
+                        
+                end case sys_mode_select;
+                
+            end if;
+        end if;
     end process pll_mult_select;
 
     ---------------------------------------------------------------------------------------------------------
@@ -472,9 +481,34 @@ begin
             end if reset_holder;
         end if;
     end process reset_in_pll_domain;
+
+    -- Generate the synchronization signal we drive out on aes50_clk_a or b if we are a master.
+    -- This free-runs if we are I2S/TDM master.
+    -- It syncs to the incoming word clock if we are I2S/TDM slave.
+    --
+    -- This is a 50% duty cycle clock, except every 2048 samples
+    clk_64_fs_divider: process (clk_1024xfs_from_pll_i) is
+        variable v_divider : natural range 0 to 15;
+    begin  -- process clk_64_fs_divider
+        if rising_edge(clk_1024xfs_from_pll_i) then
+            if rst_pll = '1' then
+                v_divider := 0;
+                clk_64_fs <= '0';
+            else
+                divider: if v_divider = 15 then
+                    v_divider := 0;
+                    clk_64_fs <= '1';
+                else
+                    v_divider := v_divider + 1;
+                    clk_64_fs <= '0';
+                end if divider;
+            end if;
+        end if;
+    end process clk_64_fs_divider;
+
+
     
-    -- Sync the selected AES input clock to the PLL domain.
-    -- 
+    
 
     -- process (clk_1024xfs_from_pll_i, rst_i)
     -- begin

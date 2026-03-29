@@ -64,7 +64,7 @@ architecture testbench of aes50_clockmanager_tb is
     signal clk_1024xfs_from_pll_i         : std_logic := '1';
     signal pll_lock_n_i                   : std_logic;
     signal clk_to_pll_o                   : std_logic;
-    signal pll_mult_value_o               : integer;
+    signal pll_mult_value_o               : natural;
     signal mclk_o                         : std_logic;
     signal wclk_o                         : std_logic;
     signal bclk_o                         : std_logic;
